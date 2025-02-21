@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  mqtt:
+    image: eclipse-mosquitto:latest
+    container_name: mqtt-broker
+    restart: unless-stopped
+    ports:
+      - "1883:1883"  # MQTT Port
+      - "9001:9001"  # WebSocket Port (optional)
+    networks:
+      - iot-network
+
+  node-red:
+    image: nodered/node-red:latest  # Or build from Dockerfile
+    container_name: node-red
+    restart: unless-stopped
+    ports:
+      - "1880:1880"  # Node-RED UI
+    depends_on:
+      - mqtt
+    networks:
+      - iot-network
+    volumes:
+      - ./nodered/data:/data
+
+networks:
+  iot-network:
+    driver: bridge
