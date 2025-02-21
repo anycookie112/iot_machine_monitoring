@@ -2,14 +2,14 @@ import dash_bootstrap_components as dbc
 from dash import Input, Output, html, Dash, State, dash, dcc, callback_context, callback
 from sqlalchemy import create_engine
 import pandas as pd
-from datetime import datetime
 import paho.mqtt.client as mqtt
 import json
-import uuid
 import threading
 import time
 import dash
 from utils.efficiency import update_sql
+
+
 
 db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
 db_connection = create_engine(db_connection_str)
@@ -47,8 +47,8 @@ for index, row in df_mould.iterrows():
     mould_list.append(row["mould_code"])
 
 machine_id = "A3"
+# mqtt_broker = "192.168.1.15"
 mqtt_broker = "192.168.1.15"
-# mqtt_broker = "192.168.0.31"
 mqtt_port = 1883
 # mqtt_topic_cycle_time = "machine/cycle_time"
 # mqtt_topic_status = "machine/status"
@@ -68,6 +68,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
     # print(f"Connected with result code {reason_code}")
     client.subscribe(topic)
     client.subscribe("machine/+")  # Subscribe to direct child topics
+    client.subscribe("action/+") 
 
 # def on_disconnect(client, userdata, rc, properties=None):
 def on_disconnect(client, userdata, flags, reason_code, properties):
@@ -88,22 +89,20 @@ def on_disconnect(client, userdata, flags, reason_code, properties):
 def on_message(client, userdata, msg):
     """Callback for handling received messages."""
     try:
+        print(f"Received message on topic: {msg.topic}")
+
         # Decode the message payload
         payload = msg.payload.decode()
         print(payload)
-        if msg.topic.startswith("status/"):
-            # Parse the message into a JSON object
-            message_data = json.loads(payload)
 
-            # Get the machine status and machine ID
+        if msg.topic.startswith("status/"):
+            # Handle status update
+            message_data = json.loads(payload)
             status = message_data.get("status")
             machine_id = message_data.get("machineid")
             mqtt_machine = f"machines/{machine_id}"
-            # print(status)
-            # print(machine_id)
 
             if status and machine_id:
-                # Create a database connection
                 connection = create_engine(db_connection_str).raw_connection()
                 with connection.cursor() as cursor:
                     sql = "UPDATE machine_list SET esp_status = %s WHERE machine_code = %s"
@@ -114,10 +113,8 @@ def on_message(client, userdata, msg):
                     cursor.execute(sql_status, (machine_id,))
                     result_status = cursor.fetchone()
 
-                    # print(machine_status)
-                    if result_status:  # Check if a result was found
-                        machine_status = result_status[0]  # Extract status from the fetched row
-                        
+                    if result_status:
+                        machine_status = result_status[0]
                         if machine_status == "mass prod":
                             sql_select = """
                             SELECT main_id
@@ -128,8 +125,7 @@ def on_message(client, userdata, msg):
                             """
                             cursor.execute(sql_select, (str(machine_id),))
                             result_mainid = cursor.fetchone()
-                            main_id = result_mainid[0]
-                            print(result_mainid)
+                            main_id = result_mainid[0] if result_mainid else None
 
                             sql_select = """
                             SELECT mp_id
@@ -140,25 +136,25 @@ def on_message(client, userdata, msg):
                             """
                             cursor.execute(sql_select, (str(machine_id),))
                             result_mpid = cursor.fetchone()
-                            mp_id = result_mpid[0]
-                            message = {
-                                "command": "true",
-                                "mp_id": str(mp_id),
-                                "main_id": str(main_id)
-                            }
-                            client.publish(mqtt_machine, payload=json.dumps(message))
+                            mp_id = result_mpid[0] if result_mpid else None
 
+                            if main_id and mp_id:
+                                message = {
+                                    "command": "true",
+                                    "mp_id": str(mp_id),
+                                    "main_id": str(main_id)
+                                }
+                                client.publish(mqtt_machine, payload=json.dumps(message))
 
                     print(f"Updated status for {machine_id} to {status}")
 
-        if msg.topic.startswith("machine/"):
+        elif msg.topic.startswith("action/"):
             message_data = json.loads(payload)
-
-            # Get the machine status and machine ID
             mp_id = message_data.get("mp_id")
             print(mp_id)
-            # machine_id = message_data.get("machineid")
-            # mqtt_machine = f"machines/{machine_id}"
+
+            update_sql(mp_id, complete=True)
+
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
                 sql = """            
@@ -172,42 +168,49 @@ def on_message(client, userdata, msg):
                 JOIN joblist AS j ON m.main_id = j.main_id
                 JOIN mould_masterlist AS mm ON j.mould_code = mm.mould_code
                 WHERE m.mp_id = %s
-                GROUP BY m.mp_id, mm.mould_code, mm.total_shot_count, mm.next_service_shot_count
-
-                    """
-                cursor.execute(sql, (str(mp_id),))
+                GROUP BY m.mp_id, mm.mould_code, mm.total_shot_count, mm.next_service_shot_count;
+                """
+                cursor.execute(sql, (mp_id,))  # No need to convert mp_id to string
                 results = cursor.fetchall()
+                print(results)
+
                 for row in results:
                     mould_code = row[1]  
-                    tsc = row[2]
-                    nssc = row[3]
-                    row_count = row[4]  
-                """
-                i need to + row count first before comparing
-                so tsc + row_count >= nssc
-                update accordingly
-                """
+                    tsc = row[2]  # total_shot_count
+                    nssc = row[3]  # next_service_shot_count
+                    row_count = row[4]  # COUNT(*), which is an integer
 
+                    # Add row_count before comparing
+                    tsc += row_count
+                    if tsc >= nssc:
+                        sql_update = """
+                        UPDATE mould_masterlist 
+                        SET total_shot_count = total_shot_count + %s, service_status = 1 
+                        WHERE mould_code = %s
+                        """
+                    else:
+                        sql_update = """
+                        UPDATE mould_masterlist 
+                        SET total_shot_count = total_shot_count + %s 
+                        WHERE mould_code = %s
+                        """
 
-
-                tsc = tsc + row_count
-                if tsc >= nssc:
-                    sql_update = """
-                    update mould_masterlist set total_shot_count = total_shot_count + %s, service_status = 1 where mould_code = %s
-                    """
-                    cursor.execute(sql_update, (row_count, str(mould_code),))
+                    cursor.execute(sql_update, (row_count, mould_code))  # Use integer for row_count
                     connection.commit()
-                else:
-                    sql_update = """
-                    update mould_masterlist set total_shot_count = total_shot_count + %s where mould_code = %s
-                    """
-                    cursor.execute(sql_update, (row_count, str(mould_code),))
-                    connection.commit()
+                    
+                print("job complete")  
 
-            update_sql(mp_id, complete=True)
+        elif msg.topic.startswith("machine/cycle_time"):
+            message_data = json.loads(payload)
+            mp_id = message_data.get("mp_id")
+            print(mp_id)
+            update_sql(mp_id)
+            
+
 
     except Exception as e:
         print(f"Error processing message: {e}")
+
 
 # Assign callbacks
 mqttc.on_connect = on_connect
@@ -254,8 +257,8 @@ layout = html.Div([
             [
                 html.H1("IoT Machine Status Dashboard", className="text-center mb-4"),
                 dcc.Dropdown(
-                    ['A8'], 
-                    value='A8', 
+                    ['A1','A8', 'A3'], 
+                    value='A1', 
                     id='machine_id', 
                     className="mb-4"
                 ),
@@ -827,8 +830,19 @@ def logging_start(on, alert, machine_id):
             """
             cursor.execute(sql, (str(machine_id),))
 
-            sql_insert = " INSERT INTO mass_production (machine_code) VALUES (%s)"
-            cursor.execute(sql_insert, (str(machine_id),))
+            sql_query = """
+            select mould_id from machine_list 
+            where machine_code = %s
+            """
+            cursor.execute(sql_query, (str(machine_id),))
+            result = cursor.fetchone()
+
+            if result:
+                mould_id = result[0]
+                print(mould_id)
+
+            sql_insert = " INSERT INTO mass_production (machine_code, mould_id) VALUES (%s, %s)"
+            cursor.execute(sql_insert, (str(machine_id), str(mould_id)))
             last_inserted_id = cursor.lastrowid
 
             sql_select = """

@@ -1,14 +1,13 @@
 import dash_bootstrap_components as dbc
 import dash
-from dash import html, dcc, Input, Output, State,callback
 import dash_ag_grid as dag
 from sqlalchemy import create_engine
 import pandas as pd
+from machine_output_layout import OutputInfo
+from utils.efficiency import calculate_downtime_df
+
 
 dash.register_page(__name__, path="/recent")
-
-import dash_bootstrap_components as dbc
-from dash import html
 
 navbar = dbc.NavbarSimple(
     children=[
@@ -43,37 +42,31 @@ def fetch_data():
     return data_excluded
 
 df = fetch_data()
+df_info = calculate_downtime_df(41)
+df_info = pd.DataFrame(columns=df_info.columns)
+columnDefs = [
+    { 'field': 'idmonitoring'},
+     { 'field': 'date'},
+     { 'field': 'time'},
+      {'field': 'time_taken'},
+      {'field': 'cycle_time'},
+      {'field': 'downtime'},
+]
 
-# AgGrid Table
-grid = dag.AgGrid(
-    id="machine-recent-data",
-    rowData=df.to_dict("records"),
-    dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
-    columnDefs=[{"field": i} for i in df.columns],
-    columnSize="sizeToFit",
-)
+# Create multiple instances with unique `page` identifiers
+output_realtime = OutputInfo("recent", df, df_info)
+# output_history = OutputInfo("history", df, df_info)
 
-layout = html.Div([
-    html.H1("Machine Output Last 24 Hours:", className="card-title"),
+# Register callbacks
+output_realtime.register_callbacks()
+
+
+layout = dbc.Container([
     navbar,
-    dcc.Interval(id="refresh-recent", interval=1500000, n_intervals=0),
-    grid,
-
+    output_realtime.grid_selection(), 
+    output_realtime.input_section(),
+    output_realtime.refresh(),
 ])
-
-
-
-# Callback to refresh table data
-@dash.callback(
-    Output("machine-recent-data", "rowData"),
-    Input("refresh-recent", 'n_intervals'),
-
-    prevent_initial_call=True  # Prevent callback from firing on page load
-)
-def refresh_table(n_clicks):
-    updated_data = fetch_data()  # Fetch updated data from DB
-    return updated_data.to_dict("records")
-
 
 """
 

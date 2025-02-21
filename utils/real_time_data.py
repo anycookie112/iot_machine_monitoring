@@ -1,14 +1,11 @@
 import pandas as pd
 from sqlalchemy import create_engine
-import sys
-from efficiency import update_sql
 
 
 
 def get_running_machines():
     # Connect to the database
     db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
-    db_engine = create_engine(db_connection_str)
     connection = create_engine(db_connection_str).raw_connection()
     cursor = connection.cursor()
     # Query the database

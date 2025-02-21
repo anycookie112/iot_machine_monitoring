@@ -1,15 +1,11 @@
 import dash_bootstrap_components as dbc
 import dash
-from dash import html, dcc, Input, Output, State,callback
-import dash_ag_grid as dag
 from sqlalchemy import create_engine
 import pandas as pd
 from utils.efficiency import calculate_downtime_df
+from machine_output_layout import OutputInfo
 
 dash.register_page(__name__, path="/all")
-
-import dash_bootstrap_components as dbc
-from dash import html
 
 navbar = dbc.NavbarSimple(
     children=[
@@ -27,7 +23,8 @@ navbar = dbc.NavbarSimple(
 
 def fetch_data():
     # Connect to the database
-    db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
+    # db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
+    db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
     db_engine = create_engine(db_connection_str)  # Use only one connection
 
     # Query the database
@@ -54,69 +51,18 @@ columnDefs = [
       {'field': 'downtime'},
 ]
 
-# AgGrid Table
-grid = dag.AgGrid(
-    id="machine-all-data",
-    rowData=df.to_dict("records"),
-    dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
-    columnDefs=[{"field": i} for i in df.columns],
-    columnSize="sizeToFit",
-)
+# Create multiple instances with unique `page` identifiers
+output_realtime = OutputInfo("all", df, df_info)
 
-grid_info = dag.AgGrid(
-    id="machine-specific-data",
-    rowData=df_info.to_dict("records"),
-    dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
-    # columnDefs=[{"field": i} for i in df_info.columns],
-    columnDefs=columnDefs,
-    columnSize="sizeToFit",
-)
+# Register callbacks
+output_realtime.register_callbacks()
 
 
-input_section = dbc.Card([
-    dbc.CardHeader("Info"),
-    dbc.CardBody([
-        html.P("Selected Machine Code:"),
-        html.H5(id="selected-machine-code", children="None", className="text-primary"),  # Display selected mould
-        html.Div(id='my-output'),
-        grid_info
-    ])
-], className="mt-4")
-# need to add seelcted machine 
-# time start 
-# time end
-# how many time stopped()
-
-
-layout = html.Div([
-    html.H1("Machine Output:", className="card-title"),
+layout = dbc.Container([
     navbar,
-    dcc.Interval(id="refresh-all", n_intervals=-1),
-    grid,
-    input_section
-
+    output_realtime.grid_selection(), 
+    output_realtime.input_section(),
+    output_realtime.refresh(),
 ])
 
 
-@dash.callback(
-    Output("machine-specific-data", "rowData"),
-    Output("selected-machine-code", "children"),
-    Output('my-output', 'children'),
-    Input('machine-all-data', 'selectedRows'),
-    prevent_initial_call=True  # Prevent callback from firing on page load
-)
-def select_data(selected_row):
-    if not selected_row:
-        return [], "", ""  # Return empty list for table and empty string for UI element
-
-    # Extract the first selected row
-    part = selected_row[0]
-    mp_id = part.get('mp_id')  # Use .get() to avoid KeyError
-    machine_id = part.get('machine_code', "")  # Provide default empty string
-
-    if not mp_id:
-        return [], machine_id  # Ensure two values are returned
-
-    updated_data = calculate_downtime_df(mp_id)  # Fetch updated data from DB
-    times_stopped = len(updated_data.index)
-    return updated_data.to_dict("records"), machine_id, f'Times machine stopped: {times_stopped}'

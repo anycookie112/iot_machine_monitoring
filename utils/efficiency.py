@@ -1,9 +1,11 @@
 import pandas as pd
 from sqlalchemy import create_engine
 from datetime import datetime
+
 def calculate_downtime(mp_id):
     # Connect to the database
     db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
+    # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
     db_engine = create_engine(db_connection_str)
 
     # Query the database
@@ -16,7 +18,6 @@ def calculate_downtime(mp_id):
         ORDER BY m.time_input;
     """
     
-    
     df = pd.read_sql(query, con=db_engine)
     df["time_input"] = pd.to_datetime(df["time_input"])
     df["date"] = df["time_input"].dt.date
@@ -26,30 +27,27 @@ def calculate_downtime(mp_id):
     # Given ideal cycle time
     ideal_cycle_time = df["cycle_time"].loc[0]  # seconds
 
-    # Calculate Downtime: (Cycle Start Time of next cycle - Time Input of current cycle) - Ideal Cycle Time
-    # df["downtime"] = df["cycle_start_time"].shift(-1) - df["time_input"]
-    # df["downtime"] = df["downtime"].dt.total_seconds() - ideal_cycle_time  # Convert to seconds
     df["downtime"] = (df["time_input"].diff().dt.total_seconds() - df["cycle_time"]).shift(-1)
+
 
 
     # Fill NaN downtime (last row) with 0
     df["downtime"] = df["downtime"].fillna(0)
-
-    # Print results
-    # print(df[["mp_id", "time_taken", "time_input", "cycle_start_time", "downtime"]])
+    tolerance = ideal_cycle_time * 0.05
+    #filter values outside ±tolerance
+    df = df[df['downtime'].abs() > tolerance]
     
     total_ideal_time = len(df.index) * ideal_cycle_time
     total_downtime = df['downtime'].sum()
     total_production_time = df['time_taken'].sum()
     efficiency = (total_ideal_time /(total_production_time + total_downtime)) * 100
-    # print(total_ideal_time)
-    # print(total_production_time)
-    print(df)
+
     return { "production_time": total_production_time, "ideal_time":total_ideal_time, "downtime": total_downtime, "efficiency": efficiency }
 
 def calculate_downtime_df(mp_id):
     # Connect to the database
     db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
+    # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
     db_engine = create_engine(db_connection_str)
 
     # Query the database
@@ -61,8 +59,6 @@ def calculate_downtime_df(mp_id):
         WHERE m.mp_id in ({mp_id})
         ORDER BY m.time_input;
     """
-    
-    
     df = pd.read_sql(query, con=db_engine)
     df["time_input"] = pd.to_datetime(df["time_input"])
     df["date"] = df["time_input"].dt.date
@@ -72,18 +68,19 @@ def calculate_downtime_df(mp_id):
     # Given ideal cycle time
     ideal_cycle_time = df["cycle_time"].loc[0]  # seconds
 
-    # Calculate Downtime: (Cycle Start Time of next cycle - Time Input of current cycle) - Ideal Cycle Time
     df["downtime"] = (df["time_input"].diff().dt.total_seconds() - df["cycle_time"]).shift(-1)
 
     # Fill NaN downtime (last row) with 0
     df["downtime"] = df["downtime"].fillna(0)
-    df = df[df["downtime"] >= 5]
+    tolerance = ideal_cycle_time * 0.1
+    #filter values outside ±tolerance
+    df = df[df['downtime'].abs() > tolerance]
     return df
 
 def update_sql(mp_id, complete = False):
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
-    db_connection = create_engine(db_connection_str)
+    # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
     connection = create_engine(db_connection_str).raw_connection()
     with connection.cursor() as cursor:
         information = calculate_downtime(mp_id)
@@ -107,12 +104,3 @@ def update_sql(mp_id, complete = False):
             where mp_id = %s 
             """
 
-
-"""
-5 sec downtime
-
-so when table row is selected, return a df with the corresponding 
-"""
-
-# df = calculate_downtime_df(46)
-# print(df)
