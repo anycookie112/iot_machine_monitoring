@@ -8,11 +8,15 @@ import threading
 import time
 import dash
 from utils.efficiency import update_sql
+import config  # Import config file
+from config.config import MQTT_CONFIG, DB_CONFIG
 
-
-
-db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
+db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
 db_connection = create_engine(db_connection_str)
+
+
+
+
 
 df = pd.read_sql(f'''
     SELECT * FROM machine_list
@@ -48,8 +52,11 @@ for index, row in df_mould.iterrows():
 
 machine_id = "A3"
 # mqtt_broker = "192.168.1.15"
-mqtt_broker = "192.168.1.15"
-mqtt_port = 1883
+
+# mqtt_broker = "192.168.5.31"
+# mqtt_port = 1883
+mqtt_broker = MQTT_CONFIG["mqtt_broker"]
+mqtt_port = MQTT_CONFIG["mqtt_port"]
 # mqtt_topic_cycle_time = "machine/cycle_time"
 # mqtt_topic_status = "machine/status"
 # mqtt_topic_publish = "machine/checking"

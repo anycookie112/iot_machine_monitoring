@@ -1,11 +1,11 @@
 import pandas as pd
 from sqlalchemy import create_engine
-
+from config.config import DB_CONFIG
 
 
 def get_running_machines():
     # Connect to the database
-    db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
+    db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
     connection = create_engine(db_connection_str).raw_connection()
     cursor = connection.cursor()
     # Query the database
@@ -38,7 +38,7 @@ def calculate_downtime(mp_id):
         mp_id = [mp_id]
 
     # Connect to the database
-    db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
+    db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
     db_engine = create_engine(db_connection_str)
 
     # Generate a dynamic placeholder string for multiple values
@@ -106,7 +106,7 @@ def update_sql_real_time(mp_id):
     for ids in mp_id: 
         print(ids)
 
-    db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
+    db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
     db_connection = create_engine(db_connection_str)
     connection = db_connection.raw_connection()  # Use the same connection object
 

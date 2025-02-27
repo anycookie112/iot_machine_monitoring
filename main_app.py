@@ -2,8 +2,9 @@ import dash
 import dash_bootstrap_components as dbc
 from dash import html, dcc
 from sqlalchemy import create_engine
-
+import config  # Import config file
 # app = dash.Dash(__name__,  external_stylesheets=[dbc.themes.BOOTSTRAP])
+
 app = dash.Dash(__name__,use_pages=True, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 # Sidebar layout
