@@ -1,13 +1,10 @@
 import pandas as pd
 from sqlalchemy import create_engine
 from datetime import datetime
-import statistics
 import os
-from collections import deque
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-# from std_dev import detect_outlier_iqr
 from config.config import DB_CONFIG
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 def calculate_downtime(mp_id):
     # Connect to the database

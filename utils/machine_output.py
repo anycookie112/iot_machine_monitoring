@@ -2,13 +2,10 @@ import dash_bootstrap_components as dbc
 import dash
 from dash import html, dcc, Input, Output, State,callback
 import dash_ag_grid as dag
-from sqlalchemy import create_engine
 import pandas as pd
 from efficiency import calculate_downtime_df
 
 
-# class ShowInfo:
-#     def __init__(self): 
 
 class OutputInfo:
     def __init__(self, page, df, df_info):
