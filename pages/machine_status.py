@@ -2,10 +2,10 @@ import dash_bootstrap_components as dbc
 from dash import Input, Output, html, Dash, State, dash, dcc, callback_context, callback
 from sqlalchemy import create_engine
 import pandas as pd
-from datetime import datetime
 import dash
+from config.config import DB_CONFIG
 
-db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
+db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
 db_connection = create_engine(db_connection_str)
 
 

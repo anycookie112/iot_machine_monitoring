@@ -3,6 +3,7 @@ import dash_bootstrap_components as dbc
 from dash import html, dcc
 from sqlalchemy import create_engine
 import config  # Import config file
+import cryptography
 # app = dash.Dash(__name__,  external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 app = dash.Dash(__name__,use_pages=True, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
@@ -24,7 +25,7 @@ sidebar = html.Div(
             pills=True,
         ),
     ],
-    style={
+    style={ 
         "position": "fixed",
         "top": 0,
         "left": 0,    
@@ -42,5 +43,3 @@ app.layout = html.Div([dcc.Location(id="url"), sidebar, content])
 
 if __name__ == "__main__":
     app.run_server(port=8888, debug=True)
-    # app.run_server(debug=False, host="0.0.0.0", port=8888)
-    # app.run_server(debug=False, host="0.0.0.0", port=8888)

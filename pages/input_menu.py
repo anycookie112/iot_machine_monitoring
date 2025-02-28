@@ -535,8 +535,7 @@ def up_mould(ums, close, ok,  is_open, machine_id, mould_id):
 def up_mould_end(ume, yes, no, is_open, machine_id):
     mqtt_machine = f"machines/{machine_id}"
     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
-    # print(triggered_id)
-
+   
     # When "ume" is clicked, open the modal
     if triggered_id == "ume":
         return True  # Open modal
@@ -934,4 +933,4 @@ def logging_stop(dme, yes, no, is_open, machine_id):
 # Run the app
 if __name__ == "__main__":
     app.run_server(debug=True)
-    # app.run_server(host="192.168.1.15",port=8050)
+

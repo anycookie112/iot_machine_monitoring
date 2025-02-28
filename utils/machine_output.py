@@ -4,7 +4,7 @@ from dash import html, dcc, Input, Output, State,callback
 import dash_ag_grid as dag
 from sqlalchemy import create_engine
 import pandas as pd
-from utils.efficiency import calculate_downtime_df
+from efficiency import calculate_downtime_df
 
 
 # class ShowInfo:
@@ -40,7 +40,7 @@ class OutputInfo:
             dbc.CardHeader("Info"),
             dbc.CardBody([
                 html.P("Selected Machine Code:"),
-                html.H5(id=f"selected-machine-code-{self.page}", children="None", className="text-primary"),  
+                # html.H5(id=f"selected-machine-code-{self.page}", children="None", className="text-primary"),  
                 html.Div(id=f'selected-machine-code-{self.page}'),  
                 html.Div(id=f'times-stopped-{self.page}'),  
                 self.grid_information()
@@ -57,6 +57,7 @@ class OutputInfo:
             prevent_initial_call=True
         )
         def select_data(selected_row):
+            print("test")
             if not selected_row:
                 return [], "", ""  
 
@@ -81,7 +82,7 @@ df = pd.DataFrame({'machine_code': ['A1', 'B2'], 'mp_id': [123, 456]})
 df_info = pd.DataFrame({'column1': [1, 2], 'column2': [3, 4]})
 
 # Create multiple instances with unique `page` identifiers
-output_realtime = OutputInfo("realtime", df, df_info)
+output_realtime = OutputInfo("test", df, df_info)
 # output_history = OutputInfo("history", df, df_info)
 
 # Register callbacks
@@ -90,7 +91,7 @@ output_realtime.register_callbacks(app)
 
 app.layout = dbc.Container([
     output_realtime.input_section(),
-    # output_history.input_section()
+    output_realtime.grid_selection()
 ])
 
 if __name__ == "__main__":
