@@ -156,7 +156,7 @@ void loop() {
                 // isTimerRunning = true;
             }
 
-            lastState = pinState;  // Update last signal state
+            lastState = pinState;  // Update last signal state   
         }
     } else {
         if (pinState != lastState) {  // Detect a signal change

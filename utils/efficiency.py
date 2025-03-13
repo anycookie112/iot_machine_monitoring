@@ -10,17 +10,27 @@ def calculate_downtime(mp_id):
     # Connect to the database
     db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
     # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
+    # db_connection_str = 'mysql+pymysql://root:UL1131@192.168.1.15/machine_monitoring'
+
     db_engine = create_engine(db_connection_str)
 
     # Query the database
+    # query = f"""
+    #     SELECT m.*,  mm.cycle_time 
+    #     FROM monitoring AS m
+    #     JOIN joblist AS j ON m.main_id = j.main_id
+    #     JOIN mould_list AS mm ON j.mould_code = mm.mould_code
+    #     WHERE m.mp_id in ({mp_id})
+    #     ORDER BY m.time_input;
+    # """
     query = f"""
-        SELECT m.*,  mm.cycle_time 
+        SELECT DISTINCT m.*, mm.cycle_time 
         FROM monitoring AS m
         JOIN joblist AS j ON m.main_id = j.main_id
-        JOIN mould_masterlist AS mm ON j.mould_code = mm.mould_code
-        WHERE m.mp_id in ({mp_id})
+        JOIN mould_list AS mm ON j.mould_code = mm.mould_code
+        WHERE m.mp_id IN ({mp_id})
         ORDER BY m.time_input;
-    """
+        """
     
     df = pd.read_sql(query, con=db_engine)
     df['time_input'] = pd.to_datetime(df['time_input'])
@@ -30,7 +40,7 @@ def calculate_downtime(mp_id):
     Q1 = df['time_taken'].quantile(0.25)
     Q3 = df['time_taken'].quantile(0.75)
     IQR = Q3 - Q1
-    threshold = 1.5
+    threshold = 3
     outliers = df[(df['time_taken'] < Q1 - threshold * IQR) | (df['time_taken'] > Q3 + threshold * IQR)]
 
     ideal_cycle_time = df["cycle_time"].loc[0]  # seconds
@@ -47,17 +57,28 @@ def calculate_downtime_df(mp_id):
     # Connect to the database
     db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
     # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
+    # db_connection_str = 'mysql+pymysql://root:UL1131@192.168.1.15/machine_monitoring'
     db_engine = create_engine(db_connection_str)
 
     # Query the database
+    # query = f"""
+    #     SELECT m.*,  mm.cycle_time 
+    #     FROM monitoring AS m
+    #     JOIN joblist AS j ON m.main_id = j.main_id
+    #     JOIN mould_list AS mm ON j.mould_code = mm.mould_code
+    #     WHERE m.mp_id in ({mp_id})
+    #     ORDER BY m.time_input;
+    # """
+
     query = f"""
-        SELECT m.*,  mm.cycle_time 
+        SELECT DISTINCT m.*, mm.cycle_time 
         FROM monitoring AS m
         JOIN joblist AS j ON m.main_id = j.main_id
-        JOIN mould_masterlist AS mm ON j.mould_code = mm.mould_code
-        WHERE m.mp_id in ({mp_id})
+        JOIN mould_list AS mm ON j.mould_code = mm.mould_code
+        WHERE m.mp_id IN ({mp_id})
         ORDER BY m.time_input;
-    """
+
+        """
     
     df = pd.read_sql(query, con=db_engine)
     df['time_input'] = pd.to_datetime(df['time_input'])
@@ -101,14 +122,14 @@ def update_sql(mp_id, complete = False):
             where mp_id = %s 
             """
 
-# mp_id = 52
+# mp_id = 65
 # # update_sql(mp_id)
 # outliers_df, full_df = calculate_downtime_df(mp_id)
 
 # result2 = calculate_downtime(mp_id)
 
 # print(len(outliers_df))
-# # print(full_df)
-# # avg = full_df["time_taken"].median()
-# # print(avg)
-# # print(result2)
+# print(full_df)
+# avg = full_df["time_taken"].median()
+# print(avg)
+# print(result2)

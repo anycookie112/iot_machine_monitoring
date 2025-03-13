@@ -38,7 +38,7 @@ def fetch_data():
     return data_excluded
 
 df = fetch_data()
-outliers_df, full_df = calculate_downtime_df(41)  # Unpack the tuple
+outliers_df, full_df = calculate_downtime_df(46)  # Unpack the tuple
 
 df_info = pd.DataFrame(columns=full_df.columns)  # Use full_df.columns instead
 
@@ -134,7 +134,8 @@ input_section = dbc.Card([
                     min=0,
                     max=100,
                     value=[0,100],
-                    id=f'time-taken-slider-{page}'
+                    id=f'time-taken-slider-{page}',
+                    tooltip={"placement": "bottom", "always_visible": True}
                 ),  
 
                 grid_information
@@ -191,10 +192,10 @@ def select_data(selected_row, slider_range):
 
     try:
         with db_connection_str.connect() as connection:
-            query = "SELECT * FROM machine_monitoring.monitoring WHERE mp_id = %s"
-            df = pd.read_sql(query, connection, params=(mp_id,))
+            # query = "SELECT * FROM machine_monitoring.monitoring WHERE mp_id = %s"
+            # df = pd.read_sql(query, connection, params=(mp_id,))
             
-            query_mould = "SELECT mp.*, mm.* FROM machine_monitoring.mass_production AS mp LEFT JOIN machine_monitoring.mould_masterlist AS mm  ON mp.mould_id = mm.mould_code WHERE mp.mp_id = %s;"
+            query_mould = "SELECT mp.*, mm.* FROM machine_monitoring.mass_production AS mp LEFT JOIN machine_monitoring.mould_list AS mm  ON mp.mould_id = mm.mould_code WHERE mp.mp_id = %s;"
             df_mould = pd.read_sql(query_mould, connection, params=(mp_id,))
             mould_id = df_mould.at[0, 'mould_code']
             part_code = df_mould.at[0, 'part_code']

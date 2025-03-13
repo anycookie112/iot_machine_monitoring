@@ -12,7 +12,7 @@ def fetch_data():
     db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
     db_connection = create_engine(db_connection_str)
 
-    df = pd.read_sql("SELECT * FROM mould_masterlist", con=db_connection)
+    df = pd.read_sql("SELECT * FROM mould_list", con=db_connection)
     filtered_df = df[df["service_status"] == 1]
     data_excluded = filtered_df.drop(columns=['service_status', 'service_increment'], errors='ignore')
     
@@ -133,7 +133,7 @@ def submit_service_record(n_clicks, mould_code, service_type, remarks):
 
             elif service_type == 2:
                 sql_update = text("""
-                    UPDATE mould_masterlist
+                    UPDATE mould_list
                     SET next_service_shot_count = total_shot_count + service_increment, 
                         service_status = 0
                     WHERE mould_code = :mould_code
