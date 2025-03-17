@@ -40,5 +40,5 @@ content = html.Div(dash.page_container, style={"margin-left": "18rem", "padding"
 app.layout = html.Div([dcc.Location(id="url"), sidebar, content])
 
 if __name__ == "__main__":
-    # app.run_server(port=8888, debug=True) 
-    app.run_server(port=8888)
+    app.run_server(port=8888, debug=True) 
+    # app.run_server(port=8888)

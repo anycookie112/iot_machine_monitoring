@@ -5,22 +5,24 @@ from dash import html, dcc, Input, Output, State
 import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.sql import text  # Import text function
+from config.config import DB_CONFIG
 dash.register_page(__name__, path='/page-2')
+
+db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
 
 # Database connection function
 def fetch_data():
-    db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
     db_connection = create_engine(db_connection_str)
 
     df = pd.read_sql("SELECT * FROM mould_list", con=db_connection)
-    filtered_df = df[df["service_status"] == 1]
-    data_excluded = filtered_df.drop(columns=['service_status', 'service_increment'], errors='ignore')
+    filtered_df = df[df["service_status"] == 0]
+    data_excluded = filtered_df.drop(columns=[ 'model_number','machine_ton','idmould_list','no_cav','customer','cycle_time_rev','cycle_time','colour','mix','material_manufacturer','colour_code','material_type', 'material_grade',  'service_status', 'service_increment'], errors='ignore')
     
     return data_excluded
 
 # Initial Data Fetch
 data_excluded = fetch_data()
-
+print(data_excluded)
 # Column definitions
 columndef = [{"field": "mould_code", "checkboxSelection": True, "headerCheckboxSelection": True}] + \
             [{"field": i} for i in data_excluded.columns]

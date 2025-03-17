@@ -133,7 +133,9 @@ input_section = dbc.Card([
                 dcc.RangeSlider(
                     min=0,
                     max=100,
-                    value=[0,100],
+                    value=[0,10000],
+                    step= 1,
+                    marks = None,
                     id=f'time-taken-slider-{page}',
                     tooltip={"placement": "bottom", "always_visible": True}
                 ),  
@@ -218,8 +220,8 @@ def select_data(selected_row, slider_range):
 
     # 🔹 Get min and max values for slider
     if "time_taken" in outliers_df:
-        min_time = outliers_df["time_taken"].min()
-        max_time = outliers_df["time_taken"].max()
+        min_time = 0
+        max_time = outliers_df["time_taken"].max() + 10
     else:
         min_time, max_time = 0, 0  # Default values if column is missing
 

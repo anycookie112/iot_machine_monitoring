@@ -115,8 +115,8 @@ layout = html.Div([
             [
                 html.H1("IoT Machine Status Dashboard", className="text-center mb-4"),
                 dcc.Dropdown(
-                    ['A1','A8', 'A3'], 
-                    value='A1', 
+                    ['A6'], 
+                    value='A6', 
                     id='machine_id', 
                     className="mb-4"
                 ),
@@ -366,8 +366,8 @@ def up_mould(ums, close, ok, mould_id,  is_open, machine_id):
                 #after inserting the query into the database, send a signal to esp
                 #so now, when the mqtt receives the command "ums", will start a timer 
                 #then when the esp receives a command "ume", insert a query into the database
-                message = {"command": "ums"}
-                publish_message(mqtt_machine, message, qos=2)
+                message = json.dumps({"command": "ums"})
+                publish_message(mqtt_machine, message, qos=2)  # ✅ Now it's a valid payload
 
                 # mqttc.publish(mqtt_machine, payload=json.dumps(message))
 

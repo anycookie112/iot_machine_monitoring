@@ -141,6 +141,7 @@ input_section = dbc.Card([
                     min=0,
                     max=100,
                     value=[0,100],
+                    step= 1,
                     id=f'time-taken-slider-{page}',
                     tooltip={"placement": "bottom", "always_visible": True}
                 ),  
