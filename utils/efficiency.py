@@ -7,109 +7,54 @@ from config.config import DB_CONFIG
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 def calculate_downtime(mp_id):
-    if not mp_id:
-        raise ValueError("mp_id cannot be None or empty")
-
-    # Ensure mp_id is a list or tuple
-    if isinstance(mp_id, int):
-        mp_id = [mp_id]  # Convert single integer to a list
-    elif isinstance(mp_id, str):
-        mp_id = [int(i) for i in mp_id.split(",") if i.strip().isdigit()]  # Convert CSV string to list
-
     # Connect to the database
     db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-    db_engine = create_engine(db_connection_str)
+    # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
+    # db_connection_str = 'mysql+pymysql://root:UL1131@192.168.1.15/machine_monitoring'
 
-    # Query using parameterized SQL to prevent SQL injection
-    query = text("""
+    db_engine = create_engine(db_connection_str)
+    
+    if not mp_id:  # Check if mp_id is None or empty
+        print("Error: mp_id is None or empty")
+        return pd.DataFrame(), None  # Return an empty DataFrame to prevent errors
+    
+
+    query = f"""
         SELECT DISTINCT m.*, mm.cycle_time 
         FROM monitoring AS m
         JOIN joblist AS j ON m.main_id = j.main_id
         JOIN mould_list AS mm ON j.mould_code = mm.mould_code
-        WHERE m.mp_id IN :mp_id
+        WHERE m.mp_id IN ({mp_id})
         ORDER BY m.time_input;
-    """)
-
-    # Execute the query
-    df = pd.read_sql(query, con=db_engine, params={"mp_id": tuple(mp_id)})
-
-    if df.empty:
-        return {"production_time": 0, "ideal_time": 0, "downtime": 0, "efficiency": 0}
-
-    # Convert time column to datetime and calculate time differences
+        """
+    
+    df = pd.read_sql(query, con=db_engine)
     df['time_input'] = pd.to_datetime(df['time_input'])
-    df['time_diff'] = df['time_input'].diff().dt.total_seconds()
-    df['downtime'] = df['time_diff'] - df['cycle_time']
-
-    # Handle outliers using IQR
-    Q1 = df['time_diff'].quantile(0.25)
-    Q3 = df['time_diff'].quantile(0.75)
-    IQR = Q3 - Q1
-    threshold = 3
-    outliers = df[(df['time_diff'] < Q1 - threshold * IQR) | (df['time_diff'] > Q3 + threshold * IQR)]
-
-    # Ensure cycle_time is not empty
-    ideal_cycle_time = df["cycle_time"].iloc[0] if not df["cycle_time"].empty else 0  
-
-    total_ideal_time = len(df.index) * ideal_cycle_time
-    total_downtime = outliers['time_diff'].sum()
-    total_production_time = df['time_diff'].sum()
+    df["date"] = df["time_input"].dt.date
+    df["time"] = df["time_input"].dt.time
+    dff = df.groupby(["action"]).time_taken.sum().reset_index()
     
-    efficiency = (total_ideal_time / total_production_time) * 100 if total_production_time > 0 else 0
-
-    return {
-        "production_time": total_production_time, 
-        "ideal_time": total_ideal_time, 
-        "downtime": total_downtime, 
-        "efficiency": efficiency
-    }
-
-
-# def calculate_downtime(mp_id):
-#     # Connect to the database
-#     db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-#     # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
-#     # db_connection_str = 'mysql+pymysql://root:UL1131@192.168.1.15/machine_monitoring'
-
-#     db_engine = create_engine(db_connection_str)
-
-#     # Query the database
-#     # query = f"""
-#     #     SELECT m.*,  mm.cycle_time 
-#     #     FROM monitoring AS m
-#     #     JOIN joblist AS j ON m.main_id = j.main_id
-#     #     JOIN mould_list AS mm ON j.mould_code = mm.mould_code
-#     #     WHERE m.mp_id in ({mp_id})
-#     #     ORDER BY m.time_input;
-#     # """
-#     query = f"""
-#         SELECT DISTINCT m.*, mm.cycle_time 
-#         FROM monitoring AS m
-#         JOIN joblist AS j ON m.main_id = j.main_id
-#         JOIN mould_list AS mm ON j.mould_code = mm.mould_code
-#         WHERE m.mp_id IN ({mp_id})
-#         ORDER BY m.time_input;
-#         """
     
-#     df = pd.read_sql(query, con=db_engine)
-#     df['time_input'] = pd.to_datetime(df['time_input'])
-#     df['time_diff'] = df['time_input'].diff().dt.total_seconds()
-#     df['downtime'] = df['time_diff'] - df['cycle_time']
+    filtered_df = df[(df["action"] == "abnormal_cycle") | (df["action"] == "downtime")]
+    # print(filtered_df)
+    start_time = df["time_input"].min()
+    end_time = df["time_input"].max()
 
-#     Q1 = df['time_taken'].quantile(0.25)
-#     Q3 = df['time_taken'].quantile(0.75)
-#     IQR = Q3 - Q1
-#     threshold = 3
-#     outliers = df[(df['time_taken'] < Q1 - threshold * IQR) | (df['time_taken'] > Q3 + threshold * IQR)]
+    total_stop = len(df[df["action"]== "downtime"])
+    total_shots = len(df[df["action"]== "normal_cycle"])
+    total_running = dff['time_taken'].sum()
+    median_cycle_time = round(df["time_taken"].median(), 2)
 
-#     ideal_cycle_time = df["cycle_time"].loc[0]  # seconds
+    cycle_time = df['cycle_time'].values[0]
+    # print(cycle_time)
+    ideal_time = total_shots * cycle_time
+    downtime = dff['time_taken'].values[1]
+    # print(df)
 
-#     total_ideal_time = len(df.index) * ideal_cycle_time
-#     total_downtime = outliers['time_taken'].sum()
-#     total_production_time = df['time_taken'].sum()
-#     efficiency = (total_ideal_time /(total_production_time)) * 100
+    efficiency = ((total_shots * cycle_time) / (total_running)) * 100
 
-#     return { "production_time": total_production_time, "ideal_time":total_ideal_time, "downtime": total_downtime, "efficiency": efficiency }
+    # return { "production_time": total_running, "ideal_time":ideal_time, "downtime": downtime, "efficiency": efficiency , "total_times_stoped": total_stop, "total_shots": total_shots}
+    return filtered_df, { "production_time": total_running, "ideal_time":ideal_time, "downtime": downtime, "efficiency": efficiency , "total_times_stoped": total_stop, "median_cycle_time": median_cycle_time, "total_shots": total_shots,"start_time": start_time,"end_time": end_time}
 
 
 def calculate_downtime_df(mp_id):
@@ -119,15 +64,6 @@ def calculate_downtime_df(mp_id):
     # db_connection_str = 'mysql+pymysql://root:UL1131@192.168.1.15/machine_monitoring'
     db_engine = create_engine(db_connection_str)
 
-    # Query the database
-    # query = f"""
-    #     SELECT m.*,  mm.cycle_time 
-    #     FROM monitoring AS m
-    #     JOIN joblist AS j ON m.main_id = j.main_id
-    #     JOIN mould_list AS mm ON j.mould_code = mm.mould_code
-    #     WHERE m.mp_id in ({mp_id})
-    #     ORDER BY m.time_input;
-    # """
 
     query = f"""
         SELECT DISTINCT m.*, mm.cycle_time 
@@ -181,14 +117,15 @@ def update_sql(mp_id, complete = False):
             where mp_id = %s 
             """
 
-mp_id = 65
+# mp_id = 63
 # update_sql(mp_id)
-outliers_df, full_df = calculate_downtime_df(mp_id)
+# # outliers_df, full_df = calculate_downtime_df(mp_id)
 
-result2 = calculate_downtime(mp_id)
+# df, result2 = calculate_downtime(mp_id)
 
-print(len(outliers_df))
-print(full_df)
-avg = full_df["time_taken"].median()
-print(avg)
-print(result2)
+# # print(len(outliers_df))
+# # print(full_df)
+# # avg = full_df["time_taken"].median()
+# print(df)
+# print(result2)
+

@@ -115,7 +115,7 @@ layout = html.Div([
             [
                 html.H1("IoT Machine Status Dashboard", className="text-center mb-4"),
                 dcc.Dropdown(
-                    ['A6'], 
+                    ['A6', 'A8', 'A1'], 
                     value='A6', 
                     id='machine_id', 
                     className="mb-4"

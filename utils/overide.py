@@ -37,68 +37,6 @@ def logging_stop_override(machine_id):
         print(f"Error updating database: {e}")
 
 
-# def logging_start_override(machine_id):
-#     mqtt_machine = f"machines/{machine_id}"
-
-#     try:
-#         with db_engine.connect() as connection:
-#             with connection.begin():  # Ensure transaction handling
-#                 # Update machine status
-#                 sql_update = text("""
-#                     UPDATE machine_list 
-#                     SET machine_status = 'mass prod'
-#                     WHERE machine_code = :machine_code
-#                 """)
-#                 connection.execute(sql_update, {"machine_code": machine_id})
-
-#                 # Fetch mould_id
-#                 sql_query = text("""
-#                     SELECT mould_id FROM machine_list 
-#                     WHERE machine_code = :machine_code
-#                 """)
-#                 result = connection.execute(sql_query, {"machine_code": machine_id}).fetchone()
-
-#                 if not result:
-#                     print(f"Error: No mould_id found for machine_id {machine_id}")
-#                     return  # Stop execution if no result
-
-#                 mould_id = result[0]
-
-#                 # Insert into mass_production table
-#                 sql_insert = text("""
-#                     INSERT INTO mass_production (machine_code, mould_id) 
-#                     VALUES (:machine_code, :mould_id)
-#                 """)
-#                 result = connection.execute(sql_insert, {"machine_code": machine_id, "mould_id": mould_id})
-#                 last_inserted_id = result.lastrowid
-
-#                 # Fetch latest main_id from joblist
-#                 sql_select = text("""
-#                     SELECT main_id
-#                     FROM joblist
-#                     WHERE machine_code = :machine_code
-#                     ORDER BY main_id DESC
-#                     LIMIT 1
-#                 """)
-#                 result = connection.execute(sql_select, {"machine_code": machine_id}).fetchone()
-
-#                 if not result:
-#                     print(f"Error: No job found for machine_id {machine_id}")
-#                     return  # Stop execution if no result
-
-#                 main_id = result[0]
-
-#                 # Publish MQTT message
-#                 message = {
-#                     "command": "start",
-#                     "main_id": str(main_id),
-#                     "mp_id": last_inserted_id
-#                 }
-#                 mqtt.publish(mqtt_machine, payload=json.dumps(message))
-
-#     except Exception as e:
-#         print(f"Error updating database: {e}")
-
 
 
    
