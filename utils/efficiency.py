@@ -96,7 +96,7 @@ def update_sql(mp_id, complete = False):
     # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
     connection = create_engine(db_connection_str).raw_connection()
     with connection.cursor() as cursor:
-        information = calculate_downtime(mp_id)
+        dummy, information = calculate_downtime(mp_id)
         # print(information["ideal_time"])
         if complete == False:
             sql_update = "update mass_production set total_production_time = %s, downtime = %s, efficiency = %s where mp_id = %s "
