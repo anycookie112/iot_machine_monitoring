@@ -703,7 +703,7 @@ def logging_start(on, alert, machine_id):
 
             if result:
                 mould_id = result[0]
-                print(mould_id)
+                # print(mould_id)
 
             sql_insert = " INSERT INTO mass_production (machine_code, mould_id) VALUES (%s, %s)"
             cursor.execute(sql_insert, (str(machine_id), str(mould_id)))

@@ -15,14 +15,14 @@ def fetch_data():
     db_connection = create_engine(db_connection_str)
 
     df = pd.read_sql("SELECT * FROM mould_list", con=db_connection)
-    filtered_df = df[df["service_status"] == 0]
+    filtered_df = df[df["service_status"] == 1]
     data_excluded = filtered_df.drop(columns=[ 'model_number','machine_ton','idmould_list','no_cav','customer','cycle_time_rev','cycle_time','colour','mix','material_manufacturer','colour_code','material_type', 'material_grade',  'service_status', 'service_increment'], errors='ignore')
     
     return data_excluded
 
 # Initial Data Fetch
 data_excluded = fetch_data()
-print(data_excluded)
+# print(data_excluded)
 # Column definitions
 columndef = [{"field": "mould_code", "checkboxSelection": True, "headerCheckboxSelection": True}] + \
             [{"field": i} for i in data_excluded.columns]
@@ -113,7 +113,7 @@ def submit_service_record(n_clicks, mould_code, service_type, remarks):
     # Convert service type to string if necessary
     service_type_str = "minor" if service_type == 1 else "major"
 
-    print(f"Submitting Service: Mould: {mould_code}, Type: {service_type_str}, Remarks: {remarks}")
+    # print(f"Submitting Service: Mould: {mould_code}, Type: {service_type_str}, Remarks: {remarks}")
 
     # Connect to the database using SQLAlchemy
     engine = create_engine(db_connection_str)
@@ -126,7 +126,7 @@ def submit_service_record(n_clicks, mould_code, service_type, remarks):
                     INSERT INTO service_history (mould_code, service_type, remarks) 
                     VALUES (:mould_code, :service_type, :remarks)
                 """)
-                print("Executing INSERT:", sql_insert)
+                # print("Executing INSERT:", sql_insert)
                 connection.execute(sql_insert, {
                     "mould_code": mould_code,
                     "service_type": service_type_str,
@@ -140,7 +140,7 @@ def submit_service_record(n_clicks, mould_code, service_type, remarks):
                         service_status = 0
                     WHERE mould_code = :mould_code
                 """)
-                print("Executing UPDATE:", sql_update)
+                # print("Executing UPDATE:", sql_update)
                 connection.execute(sql_update, {"mould_code": mould_code})
 
         return dbc.Alert("Service record submitted successfully!", color="success")

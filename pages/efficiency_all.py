@@ -478,7 +478,7 @@ def update_extra_table(selected_row, clicked_day, clicked_hour):
     if clicked_day and "points" in clicked_day and clicked_day["points"]:
         # Extract day from the clicked day
         day = clicked_day["points"][0].get("x")
-        print(f"Selected day: {day}")
+        # print(f"Selected day: {day}")
 
         # Convert the day to a datetime object to match the DataFrame's 'date' format
         day = pd.to_datetime(day, errors='coerce').date()  # Keep only the date part
@@ -492,7 +492,7 @@ def update_extra_table(selected_row, clicked_day, clicked_hour):
     # Return the filtered data for the rowData
     if clicked_hour and "points" in clicked_hour and clicked_hour["points"]:
         hour = clicked_hour["points"][0].get("x")
-        print(f"Selected day: {hour}")
+        # print(f"Selected day: {hour}")
     
 
 

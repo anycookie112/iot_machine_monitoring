@@ -18,30 +18,30 @@ import threading
 import time
 from config.config import MQTT_CONFIG
 
-# ✅ MQTT Configuration
+#  MQTT Configuration
 mqtt_broker = MQTT_CONFIG["mqtt_broker"]
 mqtt_port = MQTT_CONFIG["mqtt_port"]
 mqtt_topics = ["status/+", "machine/+", "action/+", "overide/+"]
 
-# ✅ Global Variables (Singleton Pattern)
+#  Global Variables (Singleton Pattern)
 mqttc = None  # Client object
 mqtt_running = False  # Ensure MQTT starts only once
 mqtt_lock = threading.Lock()  # Prevent race conditions
 
-# ✅ MQTT Callbacks
+#  MQTT Callbacks
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
-        print("✅ Connected to MQTT broker!")
+        print(" Connected to MQTT broker!")
         for topic in mqtt_topics:
             client.subscribe(topic, qos=2)
-            print(f"🔄 Subscribed to {topic}")
+            print(f" Subscribed to {topic}")
     else:
-        print(f"❌ Connection failed with reason code {reason_code}")
+        print(f" Connection failed with reason code {reason_code}")
 
 def on_disconnect(client, userdata, flags, reason_code, properties):
-    print("❌ Disconnected from MQTT broker.")
+    print(" Disconnected from MQTT broker.")
     if reason_code != 0:
-        print("⚠️ Unexpected disconnection. Reconnecting...")
+        print(" Unexpected disconnection. Reconnecting...")
         reconnect_mqtt(client)
 
 def on_message(client, userdata, msg):
@@ -67,9 +67,20 @@ def on_message(client, userdata, msg):
             if status and machine_id:
                 connection = create_engine(db_connection_str).raw_connection()
                 with connection.cursor() as cursor:
-                    sql = "UPDATE machine_list SET esp_status = %s WHERE machine_code = %s"
-                    cursor.execute(sql, (status, machine_id))
-                    connection.commit()
+                    if status == "disconnected":
+                        # Insert a row into monitoring table
+                        sql = "UPDATE machine_list SET esp_status = %s WHERE machine_code = %s"
+                        cursor.execute(sql, (status, machine_id))
+                        connection.commit()
+
+                        sql_logging = "INSERT INTO error_log (machine_code, error_type, time_input) VALUES (%s, %s, %s)"
+                        cursor.execute(sql_logging, (machine_id, "ESP Disconnected", "TIMESTAMP()"))
+                        connection.commit()
+                    else:
+                        # Insert a row into monitoring table
+                        sql = "UPDATE machine_list SET esp_status = %s WHERE machine_code = %s"
+                        cursor.execute(sql, (status, machine_id))
+                        connection.commit()
 
                     sql_status = "SELECT machine_status FROM machine_list WHERE machine_code = %s"
                     cursor.execute(sql_status, (machine_id,))
@@ -148,7 +159,7 @@ def on_message(client, userdata, msg):
                     """
                     cursor.execute(sql, (mp_id,))  # No need to convert mp_id to string
                     results = cursor.fetchall()
-                    print(results) 
+                    # print(results) 
                     #848
                     for row in results:
                         mould_code = row[1]  
@@ -269,23 +280,23 @@ def reconnect_mqtt(client):
     while True:
         try:
             client.reconnect()
-            print("✅ Reconnected to MQTT broker!")
+            print(" Reconnected to MQTT broker!")
             break
         except Exception as e:
-            print(f"❌ Reconnection failed: {e}. Retrying in {retry_interval} seconds...")
+            print(f" Reconnection failed: {e}. Retrying in {retry_interval} seconds...")
             time.sleep(retry_interval)
             retry_interval = min(retry_interval * 2, 60)
 
-# ✅ Publish function
+#  Publish function
 def publish_message(topic, payload, qos=2):
     global mqttc
     if mqttc and mqttc.is_connected():
         mqttc.publish(topic, payload, qos)
-        print(f"📤 Published to {topic}: {payload}")
+        print(f" Published to {topic}: {payload}")
     else:
-        print("❌ MQTT client is not connected. Cannot publish message.")
+        print(" MQTT client is not connected. Cannot publish message.")
 
-# ✅ Singleton MQTT Initialization
+#  Singleton MQTT Initialization
 def get_mqtt_client():
     global mqttc, mqtt_running
     with mqtt_lock:  # Ensure thread safety
