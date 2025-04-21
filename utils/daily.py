@@ -174,25 +174,32 @@ def fetch_data(start_time ,mid_time , end_time ):
     data_excluded = df.drop(columns=['status', 'time_completed'], errors='ignore')
     return machines_running, df, df2
 
-def daily_report(date = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
+def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
     start_time, mid_time, end_time = date_calculation(date)
     df_unique_raw, shift1, shift2 = fetch_data(start_time, mid_time, end_time)
 
+    # If there's no data at all, return an empty DataFrame with the expected columns
+    if shift1.empty and shift2.empty and df_unique_raw.empty:
+        return pd.DataFrame(columns=[
+            "mp_id", "machine_code", "mould_id", "total_stops",
+            "shift_1_stops", "shift_1_downtime",
+            "shift_2_stops", "shift_2_downtime",
+            # add any other columns expected from information_df below
+        ])
+
     information_df = fetch_data_variation(date)
 
-    information_df = calculate_filtered_variance_by_group(information_df, "mp_id", "time_taken")
+    if not information_df.empty:
+        information_df = calculate_filtered_variance_by_group(information_df, "mp_id", "time_taken")
 
     # Ensure df_unique has one row per mp_id
     df_unique = df_unique_raw[["mp_id", "machine_code", "mould_id"]].drop_duplicates(subset="mp_id")
-    # print(df_unique)
 
     # Aggregate data for Shift 1
     df_counts1 = shift1.groupby("mp_id").agg(
         shift_1_stops=("idmonitoring", "count"),
         shift_1_downtime=("time_taken", "sum")
     ).reset_index()
-
-    # print(df_counts1)
 
     # Aggregate data for Shift 2
     df_counts2 = shift2.groupby("mp_id").agg(
@@ -202,12 +209,8 @@ def daily_report(date = datetime.now().replace(hour=8, minute=0, second=0, micro
 
     # Merge all together on mp_id
     merged = pd.merge(df_unique, df_counts1, how='outer', on='mp_id')
-    # print(f"1:{merged}")
     merged = pd.merge(merged, df_counts2, how='outer', on='mp_id')
-    # print(f"2:{merged}")
-
-    merged = pd.merge(merged, information_df, how='outer', on='mp_id')
-    # print(f"3:{merged}")
+    merged = pd.merge(merged, information_df, how='outer', on='mp_id', suffixes=('', '_info'))
 
 
     # Optional: fill missing stop/downtime values with 0
@@ -217,20 +220,18 @@ def daily_report(date = datetime.now().replace(hour=8, minute=0, second=0, micro
         "shift_2_stops": 0,
         "shift_2_downtime": 0
     }, inplace=True)
+    merged = merged.infer_objects(copy=False)
 
     # Calculate total_stops
     merged['total_stops'] = merged['shift_1_stops'] + merged['shift_2_stops']
 
     # Reorder columns to place 'total_stops' after 'mould_id'
     cols = list(merged.columns)
-    mould_index = cols.index('mould_id')
-    # Remove total_stops if already at the end
-    cols.remove('total_stops')
-    # Insert it right after mould_id
-    cols.insert(mould_index + 1, 'total_stops')
-
-    # Apply reordered columns
-    merged = merged[cols]
+    if 'total_stops' in cols and 'mould_id' in cols:
+        cols.remove('total_stops')
+        mould_index = cols.index('mould_id')
+        cols.insert(mould_index + 1, 'total_stops')
+        merged = merged[cols]
 
     return merged
 
@@ -294,7 +295,7 @@ def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, m
 
 # # # df, dummy = calculate_downtime(79)
 # # # print(df)
-# parsed_date = datetime.strptime('2025-04-17', "%Y-%m-%d")
+parsed_date = datetime.strptime('2025-04-20', "%Y-%m-%d")
 
 # # s1, s2 = hourly(73,parsed_date )
 # # print("Shift 1:")
@@ -309,8 +310,8 @@ def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, m
 # y = daily_report(parsed_date)
 # print(y)
 
-# df = daily_report()
-# print(df)
+df = daily_report(parsed_date)
+print(df)
 
 # df_unique_raw, shift1, shift2 = fetch_data()
 # print(shift1)
