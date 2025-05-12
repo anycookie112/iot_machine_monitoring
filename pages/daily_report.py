@@ -10,13 +10,13 @@ from datetime import datetime, timedelta, date
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from utils.daily import daily_report, hourly
+from utils.daily import daily_report, hourly, calculate_downtime_daily_report
+from utils.efficiency import  calculate_downtime_df_daily_report
 from config.config import DB_CONFIG
 import plotly.graph_objects as go
 import plotly.express as px
 
 dash.register_page(__name__, path="/daily")
-
 
 page = "daily"
 
@@ -116,6 +116,28 @@ grid_daily = dag.AgGrid(
     columnSize="autoSize",
 )
 
+outliers_df, full_df = calculate_downtime_df_daily_report(46)  # Unpack the tuple
+
+df_info = pd.DataFrame(columns=full_df.columns)  # Use full_df.columns instead
+
+columnDefs = [
+            { 'field': 'idmonitoring'},
+            { 'field': 'date', 'filter': 'agDateColumnFilter'},
+            { 'field': 'time'},
+            {'field': 'time_taken' ,'filter': 'agNumberColumnFilter'},
+            {'field': 'action'},
+            # {'field': 'downtime'},
+            ]
+
+
+grid_information_bar = dag.AgGrid(
+            id=f"grid_daily_detailed-{page}",  # Unique ID per page
+            rowData=df_info.to_dict("records"),
+            dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
+            columnDefs=columnDefs,
+            columnSize="sizeToFit",
+            enableEnterpriseModules=True,  # Enables advanced features
+        )
 
 refresh = dcc.Interval(
     id="refresh-interval",
@@ -130,7 +152,6 @@ refresh_button = dbc.Button(
     className="mb-3",
 )
 
-
 layout = html.Div([
     html.H1(
         "Daily Report Analysis",
@@ -143,7 +164,7 @@ layout = html.Div([
         dcc.DatePickerSingle(
             id='date-picker',
             display_format='YYYY-MM-DD',
-            date=datetime.now().date(),  # Default to today
+            date=(datetime.now() - timedelta(days=1)).date(),  # Default to yesterday
             style={"marginBottom": "20px"}
         ),
     ], style={"textAlign": "center", "marginBottom": "20px"}),
@@ -171,13 +192,19 @@ layout = html.Div([
             style={"width": "48%", "display": "inline-block", "padding": "10px", "boxShadow": "0px 4px 6px rgba(0, 0, 0, 0.1)", "borderRadius": "10px"}
         ),
     ], style={"display": "flex", "justifyContent": "space-between", "gap": "4%", "marginTop": "20px"}),
+
+    html.Div([
+        html.H3("Daily Report Data", style={"textAlign": "center", "marginBottom": "20px"}),
+        grid_information_bar,
+    ], className="mb-4", style={"padding": "20px", "border": "1px solid #ddd", "borderRadius": "10px", "backgroundColor": "#f9f9f9"}),
+
+    
 ], style={"padding": "20px", "fontFamily": "Arial, sans-serif", "backgroundColor": "#f4f6f9"})
-
-
 
 @callback(
     Output("shift1-graph", "figure"),  
     Output("shift2-graph", "figure"),  
+    Output(f"grid_daily_detailed-{page}", "rowData"),
     Input("grid_daily", 'selectedRows'),  
     Input("date-picker", 'date'),  
 )
@@ -185,7 +212,7 @@ def update_shift_data(selected_row, date):
     # print(selected_row)  # Debugging line to check selected rows
     parsed_date = datetime.strptime(date, "%Y-%m-%d")
     if not selected_row:  # Fix: Handle empty list or None
-        return go.Figure(), go.Figure()  
+        return go.Figure(), go.Figure()  , []
 
     part = selected_row[0]  # Safely extract the first row
     mp_id = part.get('mp_id')  
@@ -205,8 +232,16 @@ def update_shift_data(selected_row, date):
     bar_chart_shift_1 = generate_bar_chart_shift(shift1, "Shift 1: Machine Stops (0800 - 2000)")
     bar_chart_shift_2 = generate_bar_chart_shift(shift2, "Shift 2: Machine Stops (2000 - 0800)")
 
+    df_select_data, downtime_information = calculate_downtime_daily_report(mp_id, date)  # Unpack the tuple
+    print(date)
+    print(df_select_data)
+    # df_info = pd.DataFrame(columns=full_df.columns)  # Use full_df.columns instead
+    
 
-    return bar_chart_shift_1, bar_chart_shift_2 
+
+
+
+    return bar_chart_shift_1, bar_chart_shift_2, df_select_data.to_dict("records")  # Update the grid with new data
 
 
 

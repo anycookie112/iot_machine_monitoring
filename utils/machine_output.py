@@ -54,7 +54,7 @@ class OutputInfo:
             prevent_initial_call=True
         )
         def select_data(selected_row):
-            print("test")
+            # print("test")
             if not selected_row:
                 return [], "", ""  
 

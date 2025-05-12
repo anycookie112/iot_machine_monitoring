@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine,text
+import plotly.graph_objects as go
 import pandas as pd
 import os
 import sys
@@ -53,10 +54,6 @@ def fetch_data_variation(date = datetime.now().replace(hour=8, minute=0, second=
 
     start, mid , end = date_calculation(date)
 
-    # yesterday_date_8am = (datetime.now() - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
-    # yesterday_date_8pm = (datetime.now() - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
-    # current_date_8am = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
-
     # Run query and load into a DataFrame
     with db_connection_str.connect() as connection:
 
@@ -104,10 +101,16 @@ def calculate_filtered_variance_by_group(df, group_col, target_col, threshold=1.
 
     return pd.DataFrame(results)
 
+# def date_calculation(date):
+#     start = (date - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+#     mid = (date - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
+#     end = date.replace(hour=8, minute=0, second=0, microsecond=0)
+#     return start, mid, end
+
 def date_calculation(date):
-    start = (date - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
-    mid = (date - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
-    end = date.replace(hour=8, minute=0, second=0, microsecond=0)
+    start = (date).replace(hour=8, minute=0, second=0, microsecond=0)
+    mid = (date).replace(hour=20, minute=0, second=0, microsecond=0)
+    end = (date + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
     return start, mid, end
 
 
@@ -245,9 +248,6 @@ def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, m
         df, _ = calculate_downtime(mp_id)
         df["time_input"] = pd.to_datetime(df["time_input"])
 
-        # Use today's date
-        # today = datetime.today().date()
-
         # Define 24-hour window: yesterday 08:00 to today 08:00
         start = pd.to_datetime(f"{date - timedelta(days=1)} 08:00:00")
         end = pd.to_datetime(f"{date} 08:00:00")
@@ -289,31 +289,257 @@ def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, m
         return pd.DataFrame(), pd.DataFrame()
 
 
+def date_calculation_new(date):
+    # Ensure date is a datetime.date object
+    if isinstance(date, str):
+        date = datetime.strptime(date, "%Y-%m-%d").date()
+
+    # Convert date to datetime for time replacement
+    date = datetime.combine(date, datetime.min.time())
+
+    start = (date - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+    mid   = (date - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
+    end   = date.replace(hour=8, minute=0, second=0, microsecond=0)
+
+    return start, mid, end
+
+
+def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
+    # Connect to the database
+    db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
+    db_engine = create_engine(db_connection_str)
+
+    if not mp_id:  # Check if mp_id is None or empty
+        print("Error: mp_id is None or empty")
+        return pd.DataFrame(), None  # Return an empty DataFrame to prevent errors
+    if isinstance(date, str):
+        date = datetime.strptime(date, "%Y-%m-%d").date()
+    previous_date = date - timedelta(days=1)
+
+    start_time, mid_time, end_time = date_calculation_new(previous_date)
+
+    query = """
+    SELECT DISTINCT m.*, mm.cycle_time 
+    FROM monitoring AS m
+    JOIN joblist AS j ON m.main_id = j.main_id
+    JOIN mould_list AS mm ON j.mould_code = mm.mould_code
+    WHERE m.mp_id = %s
+    AND DATE(m.time_input) BETWEEN %s AND %s
+    ORDER BY m.time_input;
+    """
+
+    # Define parameters as a tuple
+    params = (mp_id, start_time, end_time)
+
+    # Execute query
+    with db_engine.connect() as connection:
+        df = pd.read_sql(query, connection, params=params)
+
+    # Check if the DataFrame is empty
+    if df.empty:
+        print("No data found for the given mp_id and date.")
+        return pd.DataFrame(), {
+            "production_time": 0,
+            "ideal_time": 0,
+            "downtime": 0,
+            "efficiency": 0,
+            "total_times_stoped": 0,
+            "median_cycle_time": 0,
+            "total_shots": 0,
+            "start_time": start_time,
+            "end_time": end_time,
+        }
+
+    df['time_input'] = pd.to_datetime(df['time_input'])
+    df["date"] = df["time_input"].dt.date
+    df["time"] = df["time_input"].dt.time
+    dff = df.groupby(["action"]).time_taken.sum().reset_index()
+
+    filtered_df = df[(df["action"] == "abnormal_cycle") | (df["action"] == "downtime")]
+    start_time = df["time_input"].min()
+    end_time = df["time_input"].max()
+
+    total_stop = len(df[df["action"] == "downtime"])
+    total_shots = len(df[df["action"] == "normal_cycle"])
+    total_running = dff['time_taken'].sum()
+    median_cycle_time = round(df["time_taken"].median(), 2)
+
+    cycle_time = df['cycle_time'].values[0]  # Safe to access now
+    ideal_time = total_shots * cycle_time
+    downtime = dff['time_taken'].values[1]
+
+    efficiency = ((total_shots * cycle_time) / total_running) * 100
+
+    return filtered_df, {
+        "production_time": total_running,
+        "ideal_time": ideal_time,
+        "downtime": downtime,
+        "efficiency": efficiency,
+        "total_times_stoped": total_stop,
+        "median_cycle_time": median_cycle_time,
+        "total_shots": total_shots,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+
+
+
+def previous_month_dates(date=datetime.now()):
+    # Get the current date
+    # today = datetime.now()
+    # Calculate the first day of the current month
+    first_day_current_month = date.replace(day=1)
+    # Subtract one day to get the last day of the previous month
+    last_day_previous_month = first_day_current_month - timedelta(days=1)
+    # Replace the day to 1 to get the first day of the previous month
+    first_day_previous_month = last_day_previous_month.replace(day=1)
+    return first_day_previous_month, last_day_previous_month
+
+
+"""
+
+so query all the data from monitoring
+
+"""
+
+
+def fetch_data_monthly(machine_selected, date= datetime.now()):
+
+    start_time, end_time = previous_month_dates(date)
+
+    query = text("""
+        SELECT monitoring.*, production.mould_id, production.machine_code
+        FROM machine_monitoring.monitoring AS monitoring
+        INNER JOIN machine_monitoring.mass_production AS production
+            ON monitoring.mp_id = production.mp_id
+        WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+        AND monitoring.action IN ('downtime');
+    """)
+
+    query2 = text("""
+        SELECT monitoring.*, production.mould_id, production.machine_code
+        FROM machine_monitoring.monitoring AS monitoring
+        INNER JOIN machine_monitoring.mass_production AS production
+            ON monitoring.mp_id = production.mp_id
+        WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+        AND monitoring.action IN ('normal_cycle');
+    """)
+
+    # Run query and load into a DataFrame
+    with db_connection_str.connect() as connection:
+
+        df_unique = pd.read_sql(query2, connection, params={
+            "start_time": start_time,
+            "end_time": end_time
+        })
+
+        # Get unique machine_code and corresponding mould_id
+        machines_running = df_unique.groupby([ "machine_code"])["mould_id"].first().reset_index()
+        # print(machines_running)
+
+        # Convert to DataFrame
+        df_main = pd.DataFrame(machines_running)
+        # print(df_main)
+
+        df = pd.read_sql(query, connection, params={
+            "start_time": start_time,
+            "end_time": end_time
+        })
+
+        df['time_input'] = pd.to_datetime(df['time_input'])
+        df["day"] = df["time_input"].dt.date
+
+        # print(df)
+            # Aggregate data for Shift 1
+        df_overall = df_detailed = df.groupby(["machine_code"]).agg(
+            month_total_stop=("idmonitoring", "count"),
+            month_total_dt=("time_taken", "sum")
+        ).reset_index()  
+
+
+
+        df_detailed = df.groupby(["machine_code", "mould_id"]).agg(
+            month_total_stop=("idmonitoring", "count"),
+            month_total_dt=("time_taken", "sum")
+        ).reset_index()    
+
+        df_detailed["stop_percentage"] = (
+        df_detailed["month_total_stop"] / 
+        df_detailed.groupby("machine_code")["month_total_stop"].transform("sum")
+    ) * 100
+        df_detailed["stop_percentage"] = df_detailed["stop_percentage"].round(2)
+        filtered_df_detailed = df_detailed[df_detailed['machine_code'] == machine_selected]
+        # filtered_df_overall = df_overall[df_detailed['machine_code'] == machine_selected]
 
 
 
 
-# # # df, dummy = calculate_downtime(79)
-# # # print(df)
-parsed_date = datetime.strptime('2025-04-20', "%Y-%m-%d")
+    return df_overall, filtered_df_detailed
 
-# # s1, s2 = hourly(73,parsed_date )
-# # print("Shift 1:")
-# # print(s1)
-# # print("Shift 2:")
-# # print(s2)
-# # date = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
-# # start, _ , end = date_calculation(parsed_date)
-# # x = fetch_data(start, _ , end)
-# # print(x)
 
-# y = daily_report(parsed_date)
-# print(y)
+def monthly(machine_code=None, date=datetime.now()):
 
-df = daily_report(parsed_date)
-print(df)
+    if machine_code == None:
+        # print("No machine code provided.")
+        return go.Figure()
+    else:
+        start_time, end_time = previous_month_dates(date)
 
-# df_unique_raw, shift1, shift2 = fetch_data()
-# print(shift1)
-# print(shift2)
-# print(df2)
+        query = text("""
+            SELECT monitoring.*, production.mould_id, production.machine_code
+            FROM machine_monitoring.monitoring AS monitoring
+            INNER JOIN machine_monitoring.mass_production AS production
+                ON monitoring.mp_id = production.mp_id
+            WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+            AND monitoring.action IN ('downtime')
+            AND production.machine_code IN (:machine_code);
+        """)
+
+        # Run query and load into a DataFrame
+        with db_connection_str.connect() as connection:
+            df_filtered = pd.read_sql(query, connection, params={
+                "start_time": start_time,
+                "end_time": end_time,
+                "machine_code": machine_code
+            })
+
+        # print(df_filtered)
+        df_filtered['time_input'] = pd.to_datetime(df_filtered['time_input'])
+        df_filtered["day"] = df_filtered["time_input"].dt.date
+
+        month_range = pd.DataFrame({
+            "day": pd.date_range(start=start_time, end=end_time)
+        })
+
+        # Convert to date only (no time part)
+        month_range["day"] = month_range["day"].dt.date
+
+        grouped = df_filtered.groupby(["day"]).size().reset_index(name="stops")
+
+        # Convert 'day' in grouped to date only
+        grouped["day"] = pd.to_datetime(grouped["day"]).dt.date
+
+        # Merge
+        daily = month_range.merge(grouped, on="day", how="left").fillna(0)
+        daily["stops"] = daily["stops"].astype(int)
+
+        return daily
+
+
+
+    # print(daily
+
+ov, de = fetch_data_monthly("A6")
+print(ov,de)
+
+# test = monthly("A6", datetime.now())
+# # test = monthly()
+# print(test)
+# df = fetch_data_monthly()
+
+# print(df)
+
+
+
+# test = hourly(79)
+# print(test)

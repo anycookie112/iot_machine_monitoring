@@ -1,21 +1,14 @@
-import dash_bootstrap_components as dbc
-from dash import Input, Output, html, Dash, State, dcc, callback_context
 from sqlalchemy import create_engine, text
-import pandas as pd
 import paho.mqtt.client as mqtt
 import json
 import threading
 import time
 from utils.efficiency import update_sql
 from config.config import MQTT_CONFIG, DB_CONFIG
-from utils.overide import logging_stop_override
 
 db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
 db_connection = create_engine(db_connection_str)
 
-import paho.mqtt.client as mqtt
-import threading
-import time
 from config.config import MQTT_CONFIG
 
 #  MQTT Configuration
@@ -73,7 +66,7 @@ def on_message(client, userdata, msg):
                         cursor.execute(sql, (status, machine_id))
                         connection.commit()
 
-                        sql_logging = "INSERT INTO error_log (machine_code, error_type, time_input) VALUES (%s, %s, %s)"
+                        sql_logging = "INSERT INTO error_logs (machine_code, error_type, time_input) VALUES (%s, %s, %s)"
                         cursor.execute(sql_logging, (machine_id, "ESP Disconnected", "TIMESTAMP()"))
                         connection.commit()
                     else:

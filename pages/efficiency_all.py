@@ -258,10 +258,7 @@ layout = html.Div([
     navbar,
     refresh_button,
     grid_selection,
-
     input_section,
-    # html.Div(id=f"output-div-{page}", style={"margin-top": "20px", "font-size": "20px"}),  # Display click data
-
     html.Div([
         dcc.Graph(id=f"bar_day-{page}", figure=fig_day, style={"width": "50%", "display": "inline-block"}),
         dcc.Graph(id=f"bar_hour-{page}", figure=fig_hour, style={"width": "50%", "display": "inline-block"}),
@@ -285,13 +282,8 @@ layout = html.Div([
     Output(f"time-taken-slider-{page}", "max"),  
     Output(f"time-taken-slider-{page}", "min"),  
     Output(f"output-div-{page}-1", "children"), 
-    # Output(f"dropdown-{page}", "options"),  
     Input(f"machine-{page}-data", 'selectedRows'),  
     Input(f"time-taken-slider-{page}", "value"),  
-    # Input("bar_hour", "clickData"),
-    # Input("bar_day", "clickData"), 
-    # Input("stored-day", "data"),
-
     prevent_initial_call=True
 )
 

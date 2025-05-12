@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
-db_connection_str = create_engine('mysql+pymysql://root:UL1131@192.168.56.1/machine_monitoring')
+db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
 
 
 def removeduplicate(data):
