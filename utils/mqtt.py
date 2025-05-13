@@ -66,8 +66,8 @@ def on_message(client, userdata, msg):
                         cursor.execute(sql, (status, machine_id))
                         connection.commit()
 
-                        sql_logging = "INSERT INTO error_logs (machine_code, error_type, time_input) VALUES (%s, %s, %s)"
-                        cursor.execute(sql_logging, (machine_id, "ESP Disconnected", "TIMESTAMP()"))
+                        sql_logging = "INSERT INTO error_logs (machine_code, error_type, time_input) VALUES (%s, %s, NOW())"
+                        cursor.execute(sql_logging, (machine_id, "ESP Disconnected"))
                         connection.commit()
                     else:
                         # Insert a row into monitoring table

@@ -17,6 +17,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 dash.register_page(__name__, path="/daily")
+# app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 page = "daily"
 
@@ -233,7 +234,7 @@ def update_shift_data(selected_row, date):
     bar_chart_shift_2 = generate_bar_chart_shift(shift2, "Shift 2: Machine Stops (2000 - 0800)")
 
     df_select_data, downtime_information = calculate_downtime_daily_report(mp_id, date)  # Unpack the tuple
-    print(date)
+    print(f"TESTINGNNGNGN {date}")
     print(df_select_data)
     # df_info = pd.DataFrame(columns=full_df.columns)  # Use full_df.columns instead
     
@@ -261,3 +262,6 @@ def update_shift_data(date):
         return df_report.to_dict("records"), daily_report_graph  # Update the grid with new data
     return []
     
+# if __name__ == "__main__":
+#     app.run_server(port=8888, debug=True) 
+#     # app.run_server(port=8888)

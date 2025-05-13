@@ -249,8 +249,8 @@ def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, m
         df["time_input"] = pd.to_datetime(df["time_input"])
 
         # Define 24-hour window: yesterday 08:00 to today 08:00
-        start = pd.to_datetime(f"{date - timedelta(days=1)} 08:00:00")
-        end = pd.to_datetime(f"{date} 08:00:00")
+        # start = pd.to_datetime(f"{date - timedelta(days=1)} 08:00:00")
+        # end = pd.to_datetime(f"{date} 08:00:00")
 
         # Filter to the defined date range
         df = df[(df["time_input"] >= start) & (df["time_input"] < end)]
@@ -297,9 +297,9 @@ def date_calculation_new(date):
     # Convert date to datetime for time replacement
     date = datetime.combine(date, datetime.min.time())
 
-    start = (date - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
-    mid   = (date - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
-    end   = date.replace(hour=8, minute=0, second=0, microsecond=0)
+    start = (date).replace(hour=8, minute=0, second=0, microsecond=0)
+    mid   = (date).replace(hour=20, minute=0, second=0, microsecond=0)
+    end   = (date + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
 
     return start, mid, end
 
@@ -314,26 +314,31 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
         return pd.DataFrame(), None  # Return an empty DataFrame to prevent errors
     if isinstance(date, str):
         date = datetime.strptime(date, "%Y-%m-%d").date()
-    previous_date = date - timedelta(days=1)
+    # previous_date = date - timedelta(days=1)
 
-    start_time, mid_time, end_time = date_calculation_new(previous_date)
+    start_date, mid_time, end_date = date_calculation_new(date)
 
+    print(start_date, end_date)
+ 
+    
     query = """
-    SELECT DISTINCT m.*, mm.cycle_time 
-    FROM monitoring AS m
-    JOIN joblist AS j ON m.main_id = j.main_id
-    JOIN mould_list AS mm ON j.mould_code = mm.mould_code
-    WHERE m.mp_id = %s
-    AND DATE(m.time_input) BETWEEN %s AND %s
-    ORDER BY m.time_input;
-    """
+        SELECT DISTINCT m.*, mm.cycle_time 
+        FROM monitoring AS m
+        JOIN joblist AS j ON m.main_id = j.main_id
+        JOIN mould_list AS mm ON j.mould_code = mm.mould_code
+        WHERE m.mp_id = %s
+        AND m.time_input BETWEEN %s AND %s
+        ORDER BY m.time_input;
+        """
 
-    # Define parameters as a tuple
-    params = (mp_id, start_time, end_time)
+    # Correctly define params as a tuple
+    params = (mp_id,start_date, end_date,)
 
     # Execute query
     with db_engine.connect() as connection:
         df = pd.read_sql(query, connection, params=params)
+        print("test")
+        print(df)
 
     # Check if the DataFrame is empty
     if df.empty:
@@ -351,11 +356,19 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
         }
 
     df['time_input'] = pd.to_datetime(df['time_input'])
-    df["date"] = df["time_input"].dt.date
-    df["time"] = df["time_input"].dt.time
-    dff = df.groupby(["action"]).time_taken.sum().reset_index()
+    # print(f"1:{df}")
 
+    df["date"] = df["time_input"].dt.date
+    # print(f"2:{df}")
+
+    df["time"] = df["time_input"].dt.time
+    # print(f"3:{df}")
+    dff = df.groupby(["action"]).time_taken.sum().reset_index()
+    # print(dff)
+
+    # filtered_df = df
     filtered_df = df[(df["action"] == "abnormal_cycle") | (df["action"] == "downtime")]
+    # print(filtered_df)
     start_time = df["time_input"].min()
     end_time = df["time_input"].max()
 
