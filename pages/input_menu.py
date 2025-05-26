@@ -12,7 +12,9 @@ from config.config import MQTT_CONFIG, DB_CONFIG
 from utils.filter_mould import get_mould_list
 from utils.overide import logging_stop_override
 from utils.mqtt import publish_message
+from utils.timer import Timer
 
+t = Timer()
 
 db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
 db_connection = create_engine(db_connection_str)
@@ -113,7 +115,7 @@ layout = html.Div([
     [
         dbc.CardBody(
             [
-                html.H1("IoT Machine Status Dashboard", className="text-center mb-4"),
+                html.H1("PRODUCTION MONITORING", className="text-center mb-4"),
                 dcc.Dropdown(
                     ['A6', 'A8', 'A1'], 
                     value='A6', 
@@ -126,8 +128,8 @@ layout = html.Div([
                 dbc.Row(
                     dbc.ButtonGroup(
                         [
-                            dbc.Button("ON", id="on", n_clicks=0, color="success" , className="btn btn-primary me-2 mb-2"),
-                            dbc.Button("OFF", id="off", n_clicks=0, color="danger", className="btn btn-primary me-2 mb-2"),
+                            dbc.Button("PRODUCTION START", id="on", n_clicks=0, color="success" , className="btn btn-primary me-2 mb-2"),
+                            dbc.Button("PRODUCTION STOP", id="off", n_clicks=0, color="danger", className="btn btn-primary me-2 mb-2"),
                         ],
                         className="gap-3"
                     ),
@@ -137,8 +139,8 @@ layout = html.Div([
                 dbc.Row(
                     dbc.ButtonGroup(
                         [
-                            dbc.Button("Up Mould Start", id="ums", n_clicks=0, className="btn btn-primary me-2 mb-2"),
-                        dbc.Button("Up Mould End", id="ume", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
+                            dbc.Button("Mould Change Start", id="ums", n_clicks=0, className="btn btn-primary me-2 mb-2"),
+                        dbc.Button("Mould Change End", id="ume", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
                         ],
                         className="gap-3"
                     ),
@@ -146,23 +148,23 @@ layout = html.Div([
                 ),
 
 
-                dbc.Row(
-                    dbc.ButtonGroup(
-                        [
-                            dbc.Button("Down Mould Start", id="dms", n_clicks=0, className="btn btn-primary me-2 mb-2"),
-                        dbc.Button("Down Mould End", id="dme", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
-                        ],
-                        className="gap-3"
-                    ),
-                    className="d-flex justify-content-center align-items-center mb-4",
-                ),
+                # dbc.Row(
+                #     dbc.ButtonGroup(
+                #         [
+                #             dbc.Button("Down Mould Start", id="dms", n_clicks=0, className="btn btn-primary me-2 mb-2"),
+                #         dbc.Button("Down Mould End", id="dme", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
+                #         ],
+                #         className="gap-3"
+                #     ),
+                #     className="d-flex justify-content-center align-items-center mb-4",
+                # ),
 
 
                 dbc.Row(
                     dbc.ButtonGroup(
                         [
-                          dbc.Button("Adjustment/QC Approval Start", id="qas", n_clicks=0, className="btn btn-primary me-2 mb-2"),
-                        dbc.Button("Adjustment/QC Approval End", id="qae", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
+                          dbc.Button("Adjustment", id="qas", n_clicks=0, className="btn btn-primary me-2 mb-2"),
+                        dbc.Button("Adjustment", id="qae", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
                         ],
                         className="gap-3"
                     ),
@@ -268,12 +270,12 @@ layout = html.Div([
     #start buttons
     Output('on', 'disabled'),
     Output('ums', 'disabled'),
-    Output('dms', 'disabled'),
+    # Output('dms', 'disabled'),
     Output('qas', 'disabled'),
     #stop buttons
     Output('off', 'disabled'),
     Output('ume', 'disabled'),
-    Output('dme', 'disabled'),
+    # Output('dme', 'disabled'),
     Output('qae', 'disabled'),
     ],
     [
@@ -290,25 +292,26 @@ def update_output(value, n):
     # Disabled by default
     button_state_on = True  
     button_state_ums = True 
-    button_state_dms = True
+    # button_state_dms = True
     button_state_qas = True
 
     button_state_off = True  
     button_state_ume = True
-    button_state_dme = True
+    # button_state_dme = True
     button_state_qae = True
 
     if status == "off":
         # no active mould on machine, only available option is up a new mould
         button_state_ums = False  
  
-    elif status == "up mould in progress":
+    elif status == "change mould in progress":
         # active mould but no other actions
         button_state_ume = False
 
     elif status == "active mould not running":
-        button_state_on = False  
-        button_state_dms = False
+        button_state_on = False 
+        button_state_ums = False  
+        # button_state_dms = False
         button_state_qas = False
 
     elif status == "adjustment/qa in progress":
@@ -318,11 +321,11 @@ def update_output(value, n):
         button_state_off = False  
 
     
-    elif status == "downmould in progess":
-        button_state_dme = False
+    # elif status == "downmould in progess":
+    #     button_state_dme = False
 
 
-    return f"Status: {status}", f"Active Mould: {mould_id}", button_state_on, button_state_ums, button_state_dms, button_state_qas, button_state_off, button_state_ume, button_state_dme, button_state_qae
+    return f"Status: {status}", f"Active Mould: {mould_id}", button_state_on, button_state_ums, button_state_qas, button_state_off, button_state_ume, button_state_qae
 
 
 """
@@ -336,7 +339,7 @@ UP MOULD
     [Input("ums", "n_clicks"), Input("close", "n_clicks"), Input("ok", "n_clicks"), Input('shorthand-select', 'value')],
     [State("modal", "is_open"), State("machine_id", "value")]
 )
-def up_mould(ums, close, ok, mould_id,  is_open, machine_id):
+def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
     # Identify which input triggered the callback
     mqtt_machine = f"machines/{machine_id}"
     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0] if callback_context.triggered else None
@@ -352,23 +355,21 @@ def up_mould(ums, close, ok, mould_id,  is_open, machine_id):
     # Handle "OK" button click
     if triggered_id == "ok":
         try:
+            t.start()
             # Database update
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
-                sql = "UPDATE machine_list SET mould_id = %s, machine_status = 'up mould in progress' WHERE machine_code = %s"
+                sql = "UPDATE machine_list SET mould_id = %s, machine_status = 'change mould in progress' WHERE machine_code = %s"
                 cursor.execute(sql, (str(mould_id), str(machine_id)))
 
                 sql_insert = "INSERT INTO joblist (machine_code, mould_code, time_input) VALUES (%s, %s, NOW())"
                 cursor.execute(sql_insert, (str(machine_id), str(mould_id)))
-
-
                 connection.commit()
                 #after inserting the query into the database, send a signal to esp
                 #so now, when the mqtt receives the command "ums", will start a timer 
                 #then when the esp receives a command "ume", insert a query into the database
-                message = json.dumps({"command": "ums"})
-                publish_message(mqtt_machine, message, qos=2)  # ✅ Now it's a valid payload
-
+                # message = json.dumps({"command": "ums"})
+                # publish_message(mqtt_machine, message, qos=2)  # ✅ Now it's a valid payload
                 # mqttc.publish(mqtt_machine, payload=json.dumps(message))
 
         except Exception as e:
@@ -380,12 +381,81 @@ def up_mould(ums, close, ok, mould_id,  is_open, machine_id):
     # Default case: No button was clicked
     return is_open
 
+
+# @callback(
+#     Output("confirmation-3", "is_open"),
+#     [Input("ume", "n_clicks"), Input("yes-3", "n_clicks"), Input("no-3", "n_clicks")],
+#     [State("confirmation-3", "is_open"), State("machine_id", "value")]
+# )
+# def change_mould_end(ume, yes, no, is_open, machine_id):
+#     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
+#     mqtt_machine = f"machines/{machine_id}"
+#     # When "ume" is clicked, open the modal
+#     if triggered_id == "ume":
+#         return True  # Open modal
+
+#     # When "yes" is clicked, update the database and close the modal
+#     if triggered_id == "yes-3":
+
+#         try:
+#             connection = create_engine(db_connection_str).raw_connection()
+#             with connection.cursor() as cursor:
+#                 sql = """
+#                 UPDATE machine_list 
+#                 SET machine_status = 'active mould not running', mould_id = %s
+#                 WHERE machine_code = %s
+#                 """
+#                 cursor.execute(sql, (None, str(machine_id),))
+#                 connection.commit()
+
+#                 # Fetch the most recent entry from joblist
+#                 sql_select = """
+#                 SELECT main_id
+#                 FROM joblist
+#                 WHERE machine_code = %s
+#                 ORDER BY main_id DESC
+#                 LIMIT 1
+#                 """
+#                 cursor.execute(sql_select, (str(machine_id),))
+#                 result = cursor.fetchone()
+
+#                 if result:
+#                     main_id = result[0]
+#                     sql_insert = """
+#                     INSERT INTO monitoring (main_id, action, time_take, time_input)
+#                     VALUES (%s, "change mould", %s, NOW())
+#                     """
+
+#                     cursor.execute(sql_insert, (str(main_id), None, "off"))
+#                     connection.commit()
+
+#                     # message = {
+#                     #     "command": "ume",
+#                     #     "main_id": str(main_id),
+#                     # }
+#                     # # mqttc.publish(mqtt_machine, payload=json.dumps(message))
+#                     # publish_message(mqtt_machine, payload=json.dumps(message), qos=2)
+#         except Exception as e:
+#             print(f"Error updating database: {e}")
+#         finally:
+#             connection.close()
+#         return False  # Close modal after action
+
+#     # When "no" is clicked, just close the modal without any action
+#     if triggered_id == "no-3":
+#         return False  # Close modal
+
+#     # Default: Return current modal state if no input is triggered
+#     return is_open
+
+
+
 @callback(
     Output("confirmation-1", "is_open"),
     [Input("ume", "n_clicks"), Input("yes-1", "n_clicks"), Input("no-1", "n_clicks")],
     [State("confirmation-1", "is_open"), State("machine_id", "value")]
 )
-def up_mould_end(ume, yes, no, is_open, machine_id):
+def change_mould_end(ume, yes, no, is_open, machine_id):
     mqtt_machine = f"machines/{machine_id}"
     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
    
@@ -396,6 +466,7 @@ def up_mould_end(ume, yes, no, is_open, machine_id):
     # When "yes" is clicked, update the database and close the modal
     if triggered_id == "yes-1":
         try:
+            elasped_time = t.stop()
             # Connect to the database
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
@@ -420,14 +491,21 @@ def up_mould_end(ume, yes, no, is_open, machine_id):
 
                 if result:
                     main_id = result[0]
+                    sql_insert = """
+                    INSERT INTO monitoring (main_id, action, time_taken, time_input)
+                    VALUES (%s, "change mould", %s, NOW())
+                    """
+                    cursor.execute(sql_insert, (str(main_id), elasped_time,))
+                    connection.commit()
+
                     # Create and publish the MQTT message
-                    message = {
-                        "command": "ume",
-                        "main_id": str(main_id),
-                        # "mould_id": str(mould_id) if mould_id else None,
-                    }
-                    # mqttc.publish(mqtt_machine, payload=json.dumps(message))
-                    publish_message(mqtt_machine, payload=json.dumps(message), qos=2)
+                    # message = {
+                    #     "command": "ume",
+                    #     "main_id": str(main_id),
+                    #     # "mould_id": str(mould_id) if mould_id else None,
+                    # }
+                    # # mqttc.publish(mqtt_machine, payload=json.dumps(message))
+                    # publish_message(mqtt_machine, payload=json.dumps(message), qos=2)
                     # print(f"MQTT message published: {message}")
                 else:
                     print(f"No matching entry found in joblist for machine_id {machine_id}")
@@ -565,101 +643,43 @@ DOWN MOULD
 
 
 
-@callback(
-    Output("alert-auto-dm", "is_open"),
-    [Input("dms", "n_clicks")],
-    [State("alert-auto-dm", "is_open"), State("machine_id", "value")]
-)
-def downmould_start(dms, alert, machine_id):
-    # Check if the callback was triggered by the "qas" button
-    mqtt_machine = f"machines/{machine_id}"
-    triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
-    if triggered_id != "dms":
-        # If not triggered by the button, do nothing (retain current state)
-        return dash.no_update
+# @callback(
+#     Output("alert-auto-dm", "is_open"),
+#     [Input("dms", "n_clicks")],
+#     [State("alert-auto-dm", "is_open"), State("machine_id", "value")]
+# )
+# def downmould_start(dms, alert, machine_id):
+#     # Check if the callback was triggered by the "qas" button
+#     mqtt_machine = f"machines/{machine_id}"
+#     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
+#     if triggered_id != "dms":
+#         # If not triggered by the button, do nothing (retain current state)
+#         return dash.no_update
 
-    # Proceed with updating the database if "qas" was clicked
-    try:
-        connection = create_engine(db_connection_str).raw_connection()
-        with connection.cursor() as cursor:
-            sql = """
-            UPDATE machine_list 
-            SET machine_status = 'downmould in progess'
-            WHERE machine_code = %s
-            """
-            cursor.execute(sql, (str(machine_id),))
-            connection.commit()
+#     # Proceed with updating the database if "qas" was clicked
+#     try:
+#         connection = create_engine(db_connection_str).raw_connection()
+#         with connection.cursor() as cursor:
+#             sql = """
+#             UPDATE machine_list 
+#             SET machine_status = 'downmould in progess'
+#             WHERE machine_code = %s
+#             """
+#             cursor.execute(sql, (str(machine_id),))
+#             connection.commit()
             
-            message = {"command": "dms"}
-            # mqttc.publish(mqtt_machine, payload=json.dumps(message))
-            publish_message(mqtt_machine, payload=json.dumps(message), qos=2)
-            return True  # Show the alert
-    except Exception as e:
-        print(f"Error updating database: {e}")
-    finally:
-        connection.close()
+#             message = {"command": "dms"}
+#             # mqttc.publish(mqtt_machine, payload=json.dumps(message))
+#             publish_message(mqtt_machine, payload=json.dumps(message), qos=2)
+#             return True  # Show the alert
+#     except Exception as e:
+#         print(f"Error updating database: {e}")
+#     finally:
+#         connection.close()
 
-    return dash.no_update
+#     return dash.no_update
 
 
-@callback(
-    Output("confirmation-3", "is_open"),
-    [Input("dme", "n_clicks"), Input("yes-3", "n_clicks"), Input("no-3", "n_clicks")],
-    [State("confirmation-3", "is_open"), State("machine_id", "value")]
-)
-def downmould_end(dme, yes, no, is_open, machine_id):
-    triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
-    mqtt_machine = f"machines/{machine_id}"
-    # When "ume" is clicked, open the modal
-    if triggered_id == "dme":
-        return True  # Open modal
-
-    # When "yes" is clicked, update the database and close the modal
-    if triggered_id == "yes-3":
-
-        try:
-            connection = create_engine(db_connection_str).raw_connection()
-            with connection.cursor() as cursor:
-                sql = """
-                UPDATE machine_list 
-                SET machine_status = 'off', mould_id = %s
-                WHERE machine_code = %s
-                """
-                cursor.execute(sql, (None, str(machine_id),))
-                connection.commit()
-
-                # Fetch the most recent entry from joblist
-                sql_select = """
-                SELECT main_id
-                FROM joblist
-                WHERE machine_code = %s
-                ORDER BY main_id DESC
-                LIMIT 1
-                """
-                cursor.execute(sql_select, (str(machine_id),))
-                result = cursor.fetchone()
-
-                if result:
-                    main_id = result[0]
-
-                    message = {
-                        "command": "dme",
-                        "main_id": str(main_id),
-                    }
-                    # mqttc.publish(mqtt_machine, payload=json.dumps(message))
-                    publish_message(mqtt_machine, payload=json.dumps(message), qos=2)
-        except Exception as e:
-            print(f"Error updating database: {e}")
-        finally:
-            connection.close()
-        return False  # Close modal after action
-
-    # When "no" is clicked, just close the modal without any action
-    if triggered_id == "no-3":
-        return False  # Close modal
-
-    # Default: Return current modal state if no input is triggered
-    return is_open
 
 
 """

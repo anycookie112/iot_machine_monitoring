@@ -108,8 +108,8 @@ grid_daily = dag.AgGrid(
             "autoHeaderHeight": True
         } for i in [
             "mp_id", "machine_code", 'mould_id',
-            'shift_1_stops', 'shift_1_downtime',
-            'shift_2_stops', 'shift_2_downtime',
+            'shift_1_stops', 'shift_1_downtime',"shift_1_downtime_minutes",
+            'shift_2_stops', 'shift_2_downtime', "shift_2_downtime_minutes",
             'min_cycle_time', 'median_cycle_time',
             'max_cycle_time', 'variance'
         ]
@@ -132,13 +132,21 @@ columnDefs = [
 
 
 grid_information_bar = dag.AgGrid(
-            id=f"grid_daily_detailed-{page}",  # Unique ID per page
-            rowData=df_info.to_dict("records"),
-            dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
-            columnDefs=columnDefs,
-            columnSize="sizeToFit",
-            enableEnterpriseModules=True,  # Enables advanced features
-        )
+    id=f"grid_daily_detailed-{page}",  # Unique ID per page
+    rowData=df_info.to_dict("records"),
+    dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
+    columnDefs=[
+        {
+            "field": i,
+            "wrapHeaderText": True,
+            "autoHeaderHeight": True
+        } for i in [
+            "idmonitoring", "time_input", "time_taken", "total_minutes",
+        ]
+    ],
+    columnSize="sizeToFit",  # Use only one columnSize option
+    enableEnterpriseModules=True,  # Enables advanced features
+)
 
 refresh = dcc.Interval(
     id="refresh-interval",
@@ -234,13 +242,6 @@ def update_shift_data(selected_row, date):
     bar_chart_shift_2 = generate_bar_chart_shift(shift2, "Shift 2: Machine Stops (2000 - 0800)")
 
     df_select_data, downtime_information = calculate_downtime_daily_report(mp_id, date)  # Unpack the tuple
-    print(f"TESTINGNNGNGN {date}")
-    print(df_select_data)
-    # df_info = pd.DataFrame(columns=full_df.columns)  # Use full_df.columns instead
-    
-
-
-
 
     return bar_chart_shift_1, bar_chart_shift_2, df_select_data.to_dict("records")  # Update the grid with new data
 

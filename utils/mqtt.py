@@ -56,7 +56,7 @@ def on_message(client, userdata, msg):
             status = message_data.get("status")
             machine_id = message_data.get("machineid")
             mqtt_machine = f"machines/{machine_id}"
-            # if status = disconnected, insert a row into monitoring, saying esp32 disconnected
+
             if status and machine_id:
                 connection = create_engine(db_connection_str).raw_connection()
                 with connection.cursor() as cursor:
