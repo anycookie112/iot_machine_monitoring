@@ -43,65 +43,65 @@ class Timer:
 
 
 
-t = Timer()
+# t = Timer()
 
 
 
-import dash
-from dash import html, dcc, Input, Output
-import dash_bootstrap_components as dbc
+# import dash
+# from dash import html, dcc, Input, Output
+# import dash_bootstrap_components as dbc
 
-# Initialize the Dash app
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+# # Initialize the Dash app
+# app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
-# Layout with two buttons and a text display
-app.layout = html.Div(
-    [
-        html.H1("Button Click Example", style={"textAlign": "center", "marginBottom": "20px"}),
+# # Layout with two buttons and a text display
+# app.layout = html.Div(
+#     [
+#         html.H1("Button Click Example", style={"textAlign": "center", "marginBottom": "20px"}),
 
-        # Buttons
-        html.Div(
-            [
-                html.Button("Button 1", id="button-1", n_clicks=0, style={"marginRight": "10px"}),
-                html.Button("Button 2", id="button-2", n_clicks=0),
-            ],
-            style={"textAlign": "center", "marginBottom": "20px"}
-        ),
+#         # Buttons
+#         html.Div(
+#             [
+#                 html.Button("Button 1", id="button-1", n_clicks=0, style={"marginRight": "10px"}),
+#                 html.Button("Button 2", id="button-2", n_clicks=0),
+#             ],
+#             style={"textAlign": "center", "marginBottom": "20px"}
+#         ),
 
-        # Text display
-        html.Div(id="output-text", style={"textAlign": "center", "fontSize": "20px", "marginTop": "20px"}),
-        html.Div(id="output-text2", style={"textAlign": "center", "fontSize": "20px", "marginTop": "20px"}),
+#         # Text display
+#         html.Div(id="output-text", style={"textAlign": "center", "fontSize": "20px", "marginTop": "20px"}),
+#         html.Div(id="output-text2", style={"textAlign": "center", "fontSize": "20px", "marginTop": "20px"}),
 
-    ],
-    style={"padding": "20px", "fontFamily": "Arial, sans-serif"}
-)
-
-
-# Callback to update the text display based on Button 1 clicks
-@app.callback(
-    Output("output-text", "children"),
-    [Input("button-1", "n_clicks")],
-    prevent_initial_call=True  # Prevent the callback from running on app load
-)
-def update_output(n_clicks_1):
-    t.start()
-    print("Button 1 clicked")
-    return "Hi"
-
-# Callback to update the text display based on Button 2 clicks
-@app.callback(
-    Output("output-text2", "children"),
-    [Input("button-2", "n_clicks")],
-    prevent_initial_call=True  # Prevent the callback from running on app load
-)
-def update_output(n_clicks_2):
-    end = t.stop()
-    print("end time")
-    return end
+#     ],
+#     style={"padding": "20px", "fontFamily": "Arial, sans-serif"}
+# )
 
 
+# # Callback to update the text display based on Button 1 clicks
+# @app.callback(
+#     Output("output-text", "children"),
+#     [Input("button-1", "n_clicks")],
+#     prevent_initial_call=True  # Prevent the callback from running on app load
+# )
+# def update_output(n_clicks_1):
+#     t.start()
+#     print("Button 1 clicked")
+#     return "Hi"
+
+# # Callback to update the text display based on Button 2 clicks
+# @app.callback(
+#     Output("output-text2", "children"),
+#     [Input("button-2", "n_clicks")],
+#     prevent_initial_call=True  # Prevent the callback from running on app load
+# )
+# def update_output(n_clicks_2):
+#     end = t.stop()
+#     print("end time")
+#     return end
 
 
-# Run the app
-if __name__ == "__main__":
-    app.run_server(port=8888, debug=True)
+
+
+# # Run the app
+# if __name__ == "__main__":
+#     app.run_server(port=8888, debug=True)

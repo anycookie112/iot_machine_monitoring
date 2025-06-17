@@ -213,7 +213,7 @@ mp_id = 99
 update_sql(mp_id)
 # outliers_df, full_df = calculate_downtime_df(mp_id)
 
-df, result2 = calculate_downtime(mp_id)
+df, result2 = calculate_downtime_df_daily_report(mp_id)
 
 # # print(len(outliers_df))
 # # print(full_df)

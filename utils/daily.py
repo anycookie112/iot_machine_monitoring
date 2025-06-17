@@ -232,6 +232,13 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
     merged['shift_1_downtime_minutes'] = (merged['shift_1_downtime'] / 60).round(2)
     merged['shift_2_downtime_minutes'] = (merged['shift_2_downtime'] / 60).round(2)
 
+    shift1_totaldt = merged["shift_1_downtime_minutes"].sum()
+    shift2_totaldt = merged["shift_2_downtime_minutes"].sum()
+    overall_totaldt = shift1_totaldt + shift2_totaldt
+    # print(f"Overall Total Downtime: {overall_totaldt} minutes")
+    # print(f"Shift 1 Total Downtime: {shift1_totaldt} minutes")
+    # print(f"Shift 2 Total Downtime: {shift2_totaldt} minutes")
+
     # Reorder columns to place 'total_stops' after 'mould_id'
     cols = list(merged.columns)
     if 'total_stops' in cols and 'mould_id' in cols:
@@ -240,7 +247,7 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
         cols.insert(mould_index + 1, 'total_stops')
         merged = merged[cols]
 
-    return merged
+    return merged, {"shift_1_totaldt": shift1_totaldt, "shift_2_totaldt": shift2_totaldt, "overall_totaldt": overall_totaldt}
 
 
 def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
@@ -343,7 +350,7 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
     with db_engine.connect() as connection:
         df = pd.read_sql(query, connection, params=params)
         # print("test")
-        # print(df)
+        print(df)
 
     # Check if the DataFrame is empty
     if df.empty:
@@ -369,7 +376,7 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
     df["time"] = df["time_input"].dt.time
     # print(f"3:{df}")
     dff = df.groupby(["action"]).time_taken.sum().reset_index()
-    # print(dff)
+    print(dff)
 
     # filtered_df = df
     filtered_df = df[(df["action"] == "abnormal_cycle") | (df["action"] == "downtime")].copy()
@@ -394,34 +401,40 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
 
     # Sort by time_input to ensure proper sequence
     filtered_df = filtered_df.sort_values(by="time_input").reset_index(drop=True)
+    print(filtered_df)
+    filtered_df["total_minutes"] = filtered_df["time_taken"] / 60
+    filtered_df["total_minutes"] = filtered_df["total_minutes"].round(2)
+
+    total_downtime = filtered_df["time_taken"].sum() / 60
+    print(f"Total Downtime: {total_downtime.round(2)} minutes")
 
     # Create a list to store the merged rows
-    merged_rows = []
+    # merged_rows = []
 
-    i = 0
-    while i < len(filtered_df) - 1:
-        current_row = filtered_df.iloc[i]
-        next_row = filtered_df.iloc[i + 1]
+    # i = 0
+    # while i < len(filtered_df) - 1:
+    #     current_row = filtered_df.iloc[i]
+    #     next_row = filtered_df.iloc[i + 1]
 
-        if current_row["action"] == "abnormal_cycle" and next_row["action"] == "downtime":
-            combined = current_row.copy()
-            combined["action"] = "downtime"
-            combined["time_taken"] = current_row["time_taken"] + next_row["time_taken"]
-            combined["total_minutes"] = combined["time_taken"] / 60
-            merged_rows.append(combined)
-            i += 2  # Skip next row
-        else:
-            i += 1  # Move to next row
+    #     if current_row["action"] == "abnormal_cycle" and next_row["action"] == "downtime":
+    #         combined = current_row.copy()
+    #         combined["action"] = "downtime"
+    #         combined["time_taken"] = current_row["time_taken"] + next_row["time_taken"]
+    #         combined["total_minutes"] = combined["time_taken"] / 60
+    #         merged_rows.append(combined)
+    #         i += 2  # Skip next row
+    #     else:
+    #         i += 1  # Move to next row
 
-    # Convert list to DataFrame
-    result_df = pd.DataFrame(merged_rows)
-
+    # # Convert list to DataFrame
+    # result_df = pd.DataFrame(merged_rows)
+    # print(f"4:{result_df}")
     # Optional: round the time columns
-    result_df["time_taken"] = result_df["time_taken"].round(2)
-    result_df["total_minutes"] = result_df["total_minutes"].round(2)
-    result_df = result_df[["idmonitoring", "time_input", "time_taken", "total_minutes"]]
+    # result_df["time_taken"] = result_df["time_taken"].round(2)
+    # result_df["total_minutes"] = result_df["total_minutes"].round(2)
+    # result_df = result_df[["idmonitoring", "time_input", "time_taken", "total_minutes"]]
 
-    return result_df, {
+    return filtered_df, {
         "production_time": total_running,
         "ideal_time": ideal_time,
         "downtime": downtime,
@@ -579,11 +592,23 @@ def monthly(machine_code=None, date=datetime.now()):
 
 
     # print(daily
+# date = datetime.strptime("2025-06-16", "%Y-%m-%d").replace(hour=8, minute=0, second=0, microsecond=0)
+# df = daily_report(date)
+# print(df)
+
+# shift1_totaldt = df["shift_1_downtime_minutes"].sum()
+# shift2_totaldt = df["shift_2_downtime_minutes"].sum()
+# overall_totaldt = df["shift_1_downtime_minutes"].sum() + df["shift_2_downtime_minutes"].sum()
+# print(f"Overall Total Downtime: {overall_totaldt} minutes")
+# print(f"Shift 1 Total Downtime: {shift1_totaldt} minutes")
+# print(f"Shift 2 Total Downtime: {shift2_totaldt} minutes")
+
+
 
 # ov, de = fetch_data_monthly("A6")
 # print(ov,de)
-df , _ = calculate_downtime_daily_report(153, "2025-05-21")
-print(df)
+# df , _ = calculate_downtime_daily_report(192, "2025-06-16")
+# print(df)
 # # Assuming df is your DataFrame and is already sorted by time_input
 # # Ensure time_taken is numeric
 # df["time_taken"] = pd.to_numeric(df["time_taken"], errors="coerce")

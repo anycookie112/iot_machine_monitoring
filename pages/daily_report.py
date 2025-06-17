@@ -87,7 +87,7 @@ def generate_bar_chart_shift(shift_data, title):
 
 shift1, shift2 = hourly(79)
 
-df_report = daily_report()
+df_report, downtime_info = daily_report()
 
 yesterday_date_8am = (datetime.now() - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
 current_date_8am = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
@@ -181,6 +181,10 @@ layout = html.Div([
     # Refresh Button and Daily Report Graph
     html.Div([
         html.Div(refresh_button, style={"textAlign": "center", "marginBottom": "20px"}),
+        html.H3(
+            id = "dt_info",
+            children = f"Total Downtime: {downtime_info['overall_totaldt']} | Shift 1 Downtime: {downtime_info['shift_1_totaldt']} | Shift 2 Downtime: {downtime_info['shift_2_totaldt']}",
+            style={"textAlign": "center", "marginBottom": "20px"}),
         dcc.Graph(id = "overall_report", figure=daily_report_graph),
     ]),
 
@@ -245,22 +249,24 @@ def update_shift_data(selected_row, date):
 
     return bar_chart_shift_1, bar_chart_shift_2, df_select_data.to_dict("records")  # Update the grid with new data
 
-
+    
 
 @callback(
     Output("grid_daily", "rowData"),  
-    Output("overall_report", "figure"),  
+    Output("overall_report", "figure"), 
+    Output("dt_info", "children"),  # Update the downtime info text 
     Input("date-picker", 'date'),  
 )
 def update_shift_data(date):
     if date is not None:
         parsed_date = datetime.strptime(date, "%Y-%m-%d")
-        df_report = daily_report(parsed_date)
+        df_report, downtime_info = daily_report(parsed_date)
 
         daily_report_graph = generate_bar_chart(df_report, f"Report ({date})")
 
+        dt_info = f"Total Downtime: {downtime_info['overall_totaldt']} minutes | Shift 1 Downtime: {downtime_info['shift_1_totaldt']} minutes | Shift 2 Downtime: {downtime_info['shift_2_totaldt']} minutes" 
 
-        return df_report.to_dict("records"), daily_report_graph  # Update the grid with new data
+        return df_report.to_dict("records"), daily_report_graph, dt_info  # Update the grid with new data
     return []
     
 # if __name__ == "__main__":

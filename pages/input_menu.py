@@ -149,19 +149,6 @@ layout = html.Div([
                     className="d-flex justify-content-center align-items-center mb-4",
                 ),
 
-
-                # dbc.Row(
-                #     dbc.ButtonGroup(
-                #         [
-                #             dbc.Button("Down Mould Start", id="dms", n_clicks=0, className="btn btn-primary me-2 mb-2"),
-                #         dbc.Button("Down Mould End", id="dme", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
-                #         ],
-                #         className="gap-3"
-                #     ),
-                #     className="d-flex justify-content-center align-items-center mb-4",
-                # ),
-
-
                 dbc.Row(
                     dbc.ButtonGroup(
                         [
@@ -322,11 +309,6 @@ def update_output(value, n):
     elif status == "mass prod":
         button_state_off = False  
 
-    
-    # elif status == "downmould in progess":
-    #     button_state_dme = False
-
-
     return f"Status: {status}", f"Active Mould: {mould_id}", button_state_on, button_state_ums, button_state_qas, button_state_off, button_state_ume, button_state_qae
 
 
@@ -367,12 +349,6 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
                 sql_insert = "INSERT INTO joblist (machine_code, mould_code, time_input) VALUES (%s, %s, NOW())"
                 cursor.execute(sql_insert, (str(machine_id), str(mould_id)))
                 connection.commit()
-                #after inserting the query into the database, send a signal to esp
-                #so now, when the mqtt receives the command "ums", will start a timer 
-                #then when the esp receives a command "ume", insert a query into the database
-                # message = json.dumps({"command": "ums"})
-                # publish_message(mqtt_machine, message, qos=2)  # ✅ Now it's a valid payload
-                # mqttc.publish(mqtt_machine, payload=json.dumps(message))
 
         except Exception as e:
             print(f"Error updating database: {e}")
@@ -426,22 +402,11 @@ def change_mould_end(ume, yes, no, is_open, machine_id):
                     main_id = result[0]
                     sql_insert = """
                     INSERT INTO monitoring (main_id, action, time_taken, time_input)
-                    VALUES (%s, "adjustment", %s, NOW())
+                    VALUES (%s, "change mould", %s, NOW())
                     """
                     cursor.execute(sql_insert, (str(main_id), elasped_time,))
                     connection.commit()
 
-                    
-
-                    # Create and publish the MQTT message
-                    # message = {
-                    #     "command": "ume",
-                    #     "main_id": str(main_id),
-                    #     # "mould_id": str(mould_id) if mould_id else None,
-                    # }
-                    # # mqttc.publish(mqtt_machine, payload=json.dumps(message))
-                    # publish_message(mqtt_machine, payload=json.dumps(message), qos=2)
-                    # print(f"MQTT message published: {message}")
                 else:
                     print(f"No matching entry found in joblist for machine_id {machine_id}")
 
@@ -494,9 +459,6 @@ def adjustment(qas, alert, machine_id):
             cursor.execute(sql, (str(machine_id),))
             connection.commit()
             t_adjust.start()  # Start the timer for adjustment
-            # message = {"command": "qas"}
-            # # mqttc.publish(mqtt_machine, payload=json.dumps(message))
-            # publish_message(mqtt_machine, payload=json.dumps(message), qos=2)
 
             return True  # Show the alert
     except Exception as e:
@@ -549,7 +511,7 @@ def adjustment_end(ume, yes, no, is_open, machine_id):
 
                     sql_insert = """
                     INSERT INTO monitoring (main_id, action, time_taken, time_input)
-                    VALUES (%s, "change mould", %s, NOW())
+                    VALUES (%s, "adjustment", %s, NOW())
                     """
                     cursor.execute(sql_insert, (str(main_id), elasped_time,))
                     connection.commit()
