@@ -16,6 +16,10 @@ from config.config import DB_CONFIG
 import plotly.graph_objects as go
 import plotly.express as px
 
+from utils.llm_report import llm_report
+
+
+
 dash.register_page(__name__, path="/daily")
 # app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
@@ -41,12 +45,7 @@ def generate_bar_chart(shift_data, title):
         labels={"machine_code": "Machine Code", "total_stops": "Total Stops"},
         text="total_stops",
     )
-    # fig.update_traces(textposition="outside")
-    # fig.update_layout(
-    #     xaxis_title="Machine Code",
-    #     yaxis_title="Total Stops",
-    #     title_x=0.5,
-    # )
+
     return fig
 
 # Generate bar chart for machine stops
@@ -211,6 +210,12 @@ layout = html.Div([
         grid_information_bar,
     ], className="mb-4", style={"padding": "20px", "border": "1px solid #ddd", "borderRadius": "10px", "backgroundColor": "#f9f9f9"}),
 
+    html.Div([
+        dbc.Button("Generate Summary", id="update-button", color="primary", className="me-1"),
+        html.H3("Summary"),
+        html.P("", id="summary-text")
+    ])
+
     
 ], style={"padding": "20px", "fontFamily": "Arial, sans-serif", "backgroundColor": "#f4f6f9"})
 
@@ -269,6 +274,18 @@ def update_shift_data(date):
         return df_report.to_dict("records"), daily_report_graph, dt_info  # Update the grid with new data
     return []
     
+
+
+@callback(
+    Output("summary-text", "children"),
+    Input("update-button", "n_clicks"),
+    Input("date-picker", 'date')
+)
+
+def llm_report(n_clicks, date):
+    return llm_report(date)
+
+
 # if __name__ == "__main__":
 #     app.run_server(port=8888, debug=True) 
 #     # app.run_server(port=8888)
