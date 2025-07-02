@@ -18,6 +18,7 @@ from utils.mqtt import publish_message
 
 class TimerError(Exception):
     """A custom exception used to report errors in use of Timer class"""
+    pass
 
 class Timer:
     def __init__(self):
@@ -40,6 +41,48 @@ class Timer:
         return elapsed_time
         # print(f"Elapsed time: {elapsed_time:0.4f} seconds")
 
+
+
+
+class TimerNew:
+    def __init__(self):
+        self._start_time = None
+
+    def is_running(self):
+        return self._start_time is not None
+
+    def start(self):
+        if self._start_time is not None:
+            raise TimerError("Timer already running.")
+        self._start_time = time.perf_counter()
+
+    def stop(self):
+        if self._start_time is None:
+            raise TimerError("Timer is not running.")
+        elapsed = time.perf_counter() - self._start_time
+        self._start_time = None
+        return elapsed
+
+
+def toggle_machine_timer(machine_id):
+    # Create timer for this machine if it doesn't exist
+    if machine_id not in machine_timers:
+        machine_timers[machine_id] = Timer()
+
+    timer = machine_timers[machine_id]
+
+    if not timer.is_running():
+        timer.start()
+        print(f"[{machine_id}] Timer started.")
+        return None  # or return "started"
+    else:
+        elapsed = timer.stop()
+        print(f"[{machine_id}] Timer stopped. Elapsed: {elapsed:.4f} seconds.")
+        return elapsed
+
+
+# Global machine-timer map
+machine_timers = {}
 
 
 

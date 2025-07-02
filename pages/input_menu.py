@@ -12,7 +12,7 @@ from config.config import MQTT_CONFIG, DB_CONFIG
 from utils.filter_mould import get_mould_list
 from utils.overide import logging_stop_override
 from utils.mqtt import publish_message
-from utils.timer import Timer
+from utils.timer import Timer, TimerNew, toggle_machine_timer
 
 t = Timer()
 t_adjust = Timer()
@@ -339,7 +339,7 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
     # Handle "OK" button click
     if triggered_id == "ok":
         try:
-            t.start()
+            toggle_machine_timer(machine_id)
             # Database update
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
@@ -349,6 +349,9 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
                 sql_insert = "INSERT INTO joblist (machine_code, mould_code, time_input) VALUES (%s, %s, NOW())"
                 cursor.execute(sql_insert, (str(machine_id), str(mould_id)))
                 connection.commit()
+
+                message = json.dumps({"command": "ums"})
+                publish_message(mqtt_machine, message, qos=2)  
 
         except Exception as e:
             print(f"Error updating database: {e}")
@@ -375,7 +378,7 @@ def change_mould_end(ume, yes, no, is_open, machine_id):
     # When "yes" is clicked, update the database and close the modal
     if triggered_id == "yes-1":
         try:
-            elasped_time = t.stop()
+            elasped_time = toggle_machine_timer(machine_id)
             # Connect to the database
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
@@ -407,10 +410,15 @@ def change_mould_end(ume, yes, no, is_open, machine_id):
                     cursor.execute(sql_insert, (str(main_id), elasped_time,))
                     connection.commit()
 
+                    
+                    message = json.dumps({"command": "ume"})
+                    publish_message(mqtt_machine, message, qos=2)  
+
                 else:
                     print(f"No matching entry found in joblist for machine_id {machine_id}")
 
                 connection.commit()  # Commit the transaction
+
 
         except Exception as e:
             print(f"Error occurred: {e}")
@@ -458,7 +466,11 @@ def adjustment(qas, alert, machine_id):
             """
             cursor.execute(sql, (str(machine_id),))
             connection.commit()
-            t_adjust.start()  # Start the timer for adjustment
+            toggle_machine_timer(machine_id)
+
+
+            message = json.dumps({"command": "qas"})
+            publish_message(mqtt_machine, message, qos=2)  
 
             return True  # Show the alert
     except Exception as e:
@@ -507,7 +519,7 @@ def adjustment_end(ume, yes, no, is_open, machine_id):
 
                 if result:
                     main_id = result[0]
-                    elasped_time = t_adjust.stop()
+                    elasped_time = toggle_machine_timer(machine_id)
 
                     sql_insert = """
                     INSERT INTO monitoring (main_id, action, time_taken, time_input)
@@ -515,6 +527,9 @@ def adjustment_end(ume, yes, no, is_open, machine_id):
                     """
                     cursor.execute(sql_insert, (str(main_id), elasped_time,))
                     connection.commit()
+
+                    message = json.dumps({"command": "qas"})
+                    publish_message(mqtt_machine, message, qos=2)  
 
 
 
