@@ -212,8 +212,21 @@ layout = html.Div([
 
     html.Div([
         dbc.Button("Generate Summary", id="update-button", color="primary", className="me-1"),
+        dcc.DatePickerSingle(
+            id='date-picker-summary',
+            display_format='YYYY-MM-DD',
+            date=(datetime.now() - timedelta(days=1)).date(),  # Default to yesterday
+            style={"marginBottom": "20px"}
+        ),
         html.H3("Summary"),
-        html.P("", id="summary-text")
+        html.Div([
+        dcc.Textarea(
+            id='textarea',
+            # value='Textarea content initialized\nwith multiple lines of text',
+            style={'width': '100%', 'height': 300},
+        ),
+        html.Div(id='textarea-example-output', style={'whiteSpace': 'pre-line'})
+    ])
     ])
 
     
@@ -260,6 +273,7 @@ def update_shift_data(selected_row, date):
     Output("grid_daily", "rowData"),  
     Output("overall_report", "figure"), 
     Output("dt_info", "children"),  # Update the downtime info text 
+    Output('date-picker-summary', 'date'),
     Input("date-picker", 'date'),  
 )
 def update_shift_data(date):
@@ -270,14 +284,14 @@ def update_shift_data(date):
         daily_report_graph = generate_bar_chart(df_report, f"Report ({date})")
 
         dt_info = f"Total Downtime: {downtime_info['overall_totaldt']} minutes | Shift 1 Downtime: {downtime_info['shift_1_totaldt']} minutes | Shift 2 Downtime: {downtime_info['shift_2_totaldt']} minutes" 
-
-        return df_report.to_dict("records"), daily_report_graph, dt_info  # Update the grid with new data
+        # mould_info = f"Mould Change Date: {}, Mould Change Time {} Adjustment Time {}"
+        return df_report.to_dict("records"), daily_report_graph, dt_info, date  # Update the grid with new data
     return []
     
 
 
 @callback(
-    Output("summary-text", "children"),
+    Output("textarea", "value"),
     Input("update-button", "n_clicks"),
     Input("date-picker", 'date')
 )
