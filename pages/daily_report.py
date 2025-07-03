@@ -10,13 +10,15 @@ from datetime import datetime, timedelta, date
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from utils.daily import daily_report, hourly, calculate_downtime_daily_report
+from utils.daily import daily_report, hourly, calculate_downtime_daily_report, get_mould_activities
 from utils.efficiency import  calculate_downtime_df_daily_report
 from config.config import DB_CONFIG
 import plotly.graph_objects as go
 import plotly.express as px
 
-from utils.llm_report import llm_report
+# from utils.llm_report import llm_report
+
+
 
 
 
@@ -107,8 +109,8 @@ grid_daily = dag.AgGrid(
             "autoHeaderHeight": True
         } for i in [
             "mp_id", "machine_code", 'mould_id',
-            'shift_1_stops', 'shift_1_downtime',"shift_1_downtime_minutes",
-            'shift_2_stops', 'shift_2_downtime', "shift_2_downtime_minutes",
+            'shift_1_stops',"shift_1_downtime_minutes",
+            'shift_2_stops', "shift_2_downtime_minutes",
             'min_cycle_time', 'median_cycle_time',
             'max_cycle_time', 'variance'
         ]
@@ -160,32 +162,53 @@ refresh_button = dbc.Button(
     className="mb-3",
 )
 
-layout = html.Div([
-    html.H1(
-        "Daily Report Analysis",
-        style={"textAlign": "center", "marginBottom": "20px", "color": "#2c3e50"}
-    ),
+layout =  html.Div([
 
-    # Date Picker Section
     html.Div([
-        html.Label("Select Date:", style={"fontWeight": "bold", "marginRight": "10px"}),
-        dcc.DatePickerSingle(
-            id='date-picker',
-            display_format='YYYY-MM-DD',
-            date=(datetime.now() - timedelta(days=1)).date(),  # Default to yesterday
-            style={"marginBottom": "20px"}
-        ),
-    ], style={"textAlign": "center", "marginBottom": "20px"}),
+    # Flex container
+    html.Div([
+        # Left column (Date picker, refresh button, H3, graph)
+        html.Div([
+            html.Label("Select Date:", style={
+                "fontWeight": "bold", "fontSize": "12px", "marginRight": "10px"
+            }),
+            dcc.DatePickerSingle(
+                id='date-picker',
+                display_format='YYYY-MM-DD',
+                date=(datetime.now() - timedelta(days=1)).date(),  # Default to yesterday
+                style={"marginBottom": "10px", "fontSize": "12px"}
+            ),
 
-    # Refresh Button and Daily Report Graph
-    html.Div([
-        html.Div(refresh_button, style={"textAlign": "center", "marginBottom": "20px"}),
-        html.H3(
-            id = "dt_info",
-            children = f"Total Downtime: {downtime_info['overall_totaldt']} | Shift 1 Downtime: {downtime_info['shift_1_totaldt']} | Shift 2 Downtime: {downtime_info['shift_2_totaldt']}",
-            style={"textAlign": "center", "marginBottom": "20px"}),
-        dcc.Graph(id = "overall_report", figure=daily_report_graph),
-    ]),
+            html.Div(refresh_button, style={
+                "textAlign": "center", "marginBottom": "10px"
+            }),
+
+            html.H5(
+                id="dt_info",
+                children=f"Total Downtime: {downtime_info['overall_totaldt']} | Shift 1 Downtime: {downtime_info['shift_1_totaldt']} | Shift 2 Downtime: {downtime_info['shift_2_totaldt']}",
+                style={"textAlign": "center", "fontSize": "13px", "marginBottom": "10px"}
+            ),
+
+            dcc.Graph(id="overall_report", figure=daily_report_graph, style={"height": "300px"})
+        ]),
+        html.Div([
+            dag.AgGrid(
+                id="ag-grid-mould",
+                rowData=[],
+                columnDefs=[
+                    {"headerName": "Machine", "field": "machine_code"},
+                    {"headerName": "Mould", "field": "mould_code"},
+                    {"headerName": "Action", "field": "action"},
+                    {"headerName": "Duration (hr)", "field": "time_taken_hr"},
+                    {"headerName": "Start", "field": "time_start"},
+                    {"headerName": "End", "field": "time_ended"},
+                ],
+                defaultColDef={"resizable": True, "sortable": True, "filter": True, "flex": 1},
+                style={"height": "300px", "width": "100%"}
+            )
+        ],)
+    ],)
+]),
 
     # Data Grid Section
     html.Div([
@@ -272,8 +295,9 @@ def update_shift_data(selected_row, date):
 @callback(
     Output("grid_daily", "rowData"),  
     Output("overall_report", "figure"), 
-    Output("dt_info", "children"),  # Update the downtime info text 
+    Output("dt_info", "children"),  
     Output('date-picker-summary', 'date'),
+    Output('ag-grid-mould', 'rowData'),
     Input("date-picker", 'date'),  
 )
 def update_shift_data(date):
@@ -285,19 +309,20 @@ def update_shift_data(date):
 
         dt_info = f"Total Downtime: {downtime_info['overall_totaldt']} minutes | Shift 1 Downtime: {downtime_info['shift_1_totaldt']} minutes | Shift 2 Downtime: {downtime_info['shift_2_totaldt']} minutes" 
         # mould_info = f"Mould Change Date: {}, Mould Change Time {} Adjustment Time {}"
-        return df_report.to_dict("records"), daily_report_graph, dt_info, date  # Update the grid with new data
+        mould_info = get_mould_activities(date)
+        return df_report.to_dict("records"), daily_report_graph, dt_info, date, mould_info.to_dict("records")  # Update the grid with new data
     return []
     
 
 
-@callback(
-    Output("textarea", "value"),
-    Input("update-button", "n_clicks"),
-    Input("date-picker", 'date')
-)
+# @callback(
+#     Output("textarea", "value"),
+#     Input("update-button", "n_clicks"),
+#     Input("date-picker", 'date')
+# )
 
-def llm_report(n_clicks, date):
-    return llm_report(date)
+# def llm_report_summary(n_clicks, date):
+#     return llm_report(date)
 
 
 # if __name__ == "__main__":

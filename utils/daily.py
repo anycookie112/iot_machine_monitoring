@@ -101,12 +101,6 @@ def calculate_filtered_variance_by_group(df, group_col, target_col, threshold=1.
 
     return pd.DataFrame(results)
 
-# def date_calculation(date):
-#     start = (date - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
-#     mid = (date - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
-#     end = date.replace(hour=8, minute=0, second=0, microsecond=0)
-#     return start, mid, end
-
 def date_calculation(date):
     start = (date).replace(hour=8, minute=0, second=0, microsecond=0)
     mid = (date).replace(hour=20, minute=0, second=0, microsecond=0)
@@ -235,9 +229,6 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
     shift1_totaldt = merged["shift_1_downtime_minutes"].sum()
     shift2_totaldt = merged["shift_2_downtime_minutes"].sum()
     overall_totaldt = shift1_totaldt + shift2_totaldt
-    # print(f"Overall Total Downtime: {overall_totaldt} minutes")
-    # print(f"Shift 1 Total Downtime: {shift1_totaldt} minutes")
-    # print(f"Shift 2 Total Downtime: {shift2_totaldt} minutes")
 
     # Reorder columns to place 'total_stops' after 'mould_id'
     cols = list(merged.columns)
@@ -259,10 +250,6 @@ def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, m
     if mp_id:
         df, _ = calculate_downtime(mp_id)
         df["time_input"] = pd.to_datetime(df["time_input"])
-
-        # Define 24-hour window: yesterday 08:00 to today 08:00
-        # start = pd.to_datetime(f"{date - timedelta(days=1)} 08:00:00")
-        # end = pd.to_datetime(f"{date} 08:00:00")
 
         # Filter to the defined date range
         df = df[(df["time_input"] >= start) & (df["time_input"] < end)]
@@ -408,31 +395,6 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
     total_downtime = filtered_df["time_taken"].sum() / 60
     print(f"Total Downtime: {total_downtime.round(2)} minutes")
 
-    # Create a list to store the merged rows
-    # merged_rows = []
-
-    # i = 0
-    # while i < len(filtered_df) - 1:
-    #     current_row = filtered_df.iloc[i]
-    #     next_row = filtered_df.iloc[i + 1]
-
-    #     if current_row["action"] == "abnormal_cycle" and next_row["action"] == "downtime":
-    #         combined = current_row.copy()
-    #         combined["action"] = "downtime"
-    #         combined["time_taken"] = current_row["time_taken"] + next_row["time_taken"]
-    #         combined["total_minutes"] = combined["time_taken"] / 60
-    #         merged_rows.append(combined)
-    #         i += 2  # Skip next row
-    #     else:
-    #         i += 1  # Move to next row
-
-    # # Convert list to DataFrame
-    # result_df = pd.DataFrame(merged_rows)
-    # print(f"4:{result_df}")
-    # Optional: round the time columns
-    # result_df["time_taken"] = result_df["time_taken"].round(2)
-    # result_df["total_minutes"] = result_df["total_minutes"].round(2)
-    # result_df = result_df[["idmonitoring", "time_input", "time_taken", "total_minutes"]]
 
     return filtered_df, {
         "production_time": total_running,
@@ -589,68 +551,72 @@ def monthly(machine_code=None, date=datetime.now()):
 
         return daily
 
+def get_main_id (mp_id):
+
+    query = text (f"""SELECT main_id FROM machine_monitoring.monitoring
+                where mp_id = :mp_id
+                limit 1 """)
+    
+    with db_connection_str.connect() as connection:
+        df_filtered = pd.read_sql(query, connection, params={
+            "mp_id": mp_id,
+        })
+
+    main_id = df_filtered["main_id"].loc[0]
+
+    query = text("""SELECT action, time_taken, time_input FROM machine_monitoring.monitoring
+                where main_id = :main_id
+                limit 2""")
+    
+    with db_connection_str.connect() as connection:
+        df_change_mould_info = pd.read_sql(query, connection, params={
+            "main_id": main_id,
+        })
+    df_dict = df_change_mould_info.to_dict(orient='records')
+
+    return df_dict
+
+def get_mould_activities(date):
+    
+    start_date, mid_time, end_date = date_calculation_new(date)
+    query = text("""SELECT monitoring.main_id, machine_code, mould_code, monitoring.action, time_taken, monitoring.time_input
+            FROM monitoring
+            inner join joblist
+            on monitoring.main_id = joblist.main_id
+            WHERE action IN ('adjustment', 'change mould')
+            AND monitoring.time_input between :start_date AND :end_date;
+            """)    
+    
+    with db_connection_str.connect() as connection:
+        df = pd.read_sql(query, connection, params={
+            "start_date": start_date,
+            "end_date": end_date
+        })
+
+    # Convert to datetime
+    df['time_input'] = pd.to_datetime(df['time_input'])
+
+    # Rename time_input to time_ended
+    df.rename(columns={'time_input': 'time_ended'}, inplace=True)
+
+    # Convert time_taken to hours
+    df['time_taken_hr'] = (df['time_taken'] / 3600).round(2)
 
 
-    # print(daily
-# date = datetime.strptime("2025-06-16", "%Y-%m-%d").replace(hour=8, minute=0, second=0, microsecond=0)
-# df = daily_report(date)
-# print(df)
-
-# shift1_totaldt = df["shift_1_downtime_minutes"].sum()
-# shift2_totaldt = df["shift_2_downtime_minutes"].sum()
-# overall_totaldt = df["shift_1_downtime_minutes"].sum() + df["shift_2_downtime_minutes"].sum()
-# print(f"Overall Total Downtime: {overall_totaldt} minutes")
-# print(f"Shift 1 Total Downtime: {shift1_totaldt} minutes")
-# print(f"Shift 2 Total Downtime: {shift2_totaldt} minutes")
+    # Compute time_start
+    df['time_start'] = df.apply(
+        lambda row: row['time_ended'] - timedelta(seconds=row['time_taken']) if pd.notnull(row['time_taken']) else pd.NaT,
+        axis=1
+    )
+    df['time_start'] = df['time_start'].dt.strftime('%H:%M')
+    df['time_ended'] = df['time_ended'].dt.strftime('%H:%M')
 
 
+    # Optional: reorder or drop old column
+    df = df[['main_id', 'machine_code', 'mould_code', 'action', 'time_taken_hr', 'time_start', 'time_ended']]
+    return df
 
-# ov, de = fetch_data_monthly("A6")
-# print(ov,de)
-# df , _ = calculate_downtime_daily_report(192, "2025-06-16")
-# print(df)
-# # Assuming df is your DataFrame and is already sorted by time_input
-# # Ensure time_taken is numeric
-# df["time_taken"] = pd.to_numeric(df["time_taken"], errors="coerce")
+    
 
-# # Sort by time_input to ensure proper sequence
-# df = df.sort_values(by="time_input").reset_index(drop=True)
-
-# # Create a list to store the merged rows
-# merged_rows = []
-
-# i = 0
-# while i < len(df) - 1:
-#     current_row = df.iloc[i]
-#     next_row = df.iloc[i + 1]
-
-#     if current_row["action"] == "abnormal_cycle" and next_row["action"] == "downtime":
-#         combined = current_row.copy()
-#         combined["action"] = "downtime"
-#         combined["time_taken"] = current_row["time_taken"] + next_row["time_taken"]
-#         combined["total_minutes"] = combined["time_taken"] / 60
-#         merged_rows.append(combined)
-#         i += 2  # Skip next row
-#     else:
-#         i += 1  # Move to next row
-
-# # Convert list to DataFrame
-# result_df = pd.DataFrame(merged_rows)
-
-# # Optional: round the time columns
-# result_df["time_taken"] = result_df["time_taken"].round(2)
-# result_df["total_minutes"] = result_df["total_minutes"].round(2)
-
-# print(result_df[["idmonitoring", "time_input", "time_taken", "total_minutes"]])
-
-# # test = monthly()
-# # print(test)
-# df = daily_report()
-
-
-# print(df)
-
-
-
-# test = hourly(79)
-# print(test)
+test = get_mould_activities("2025-07-02")
+print(test)
