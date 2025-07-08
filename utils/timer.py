@@ -67,7 +67,7 @@ class TimerNew:
 def toggle_machine_timer(machine_id):
     # Create timer for this machine if it doesn't exist
     if machine_id not in machine_timers:
-        machine_timers[machine_id] = Timer()
+        machine_timers[machine_id] = TimerNew()
 
     timer = machine_timers[machine_id]
 
