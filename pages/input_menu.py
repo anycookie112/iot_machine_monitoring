@@ -209,6 +209,7 @@ layout = html.Div([
                 dbc.ModalFooter([
                     dbc.Button("Yes", id="yes-2",  n_clicks=0),
                     dbc.Button("No", color="primary", id="no-2", className="ms-auto", n_clicks=0),
+                    dbc.Input(id="name", placeholder="Name", type="text"),
                 ]),
             ],
             id="confirmation-2",
@@ -338,6 +339,9 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
 
     # Handle "OK" button click
     if triggered_id == "ok":
+        if not mould_id or not mould_id.strip():
+            # If name is empty or just whitespace, do nothing (keep modal open)
+            return True
         try:
             toggle_machine_timer(machine_id)
             # Database update
@@ -482,10 +486,10 @@ def adjustment(qas, alert, machine_id):
 
 @callback(
     Output("confirmation-2", "is_open"),
-    [Input("qae", "n_clicks"), Input("yes-2", "n_clicks"), Input("no-2", "n_clicks")],
+    [Input("qae", "n_clicks"), Input("yes-2", "n_clicks"), Input("no-2", "n_clicks"), Input("name", "value")],
     [State("confirmation-2", "is_open"), State("machine_id", "value")]
 )
-def adjustment_end(ume, yes, no, is_open, machine_id):
+def adjustment_end(ume, yes, no, name, is_open, machine_id):
     mqtt_machine = f"machines/{machine_id}"
     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
 
@@ -495,6 +499,10 @@ def adjustment_end(ume, yes, no, is_open, machine_id):
 
     # When "yes" is clicked, update the database and close the modal
     if triggered_id == "yes-2":
+        if not name or not name.strip():
+            # If name is empty or just whitespace, do nothing (keep modal open)
+            return True
+        
         try:
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
@@ -522,10 +530,10 @@ def adjustment_end(ume, yes, no, is_open, machine_id):
                     elasped_time = toggle_machine_timer(machine_id)
 
                     sql_insert = """
-                    INSERT INTO monitoring (main_id, action, time_taken, time_input)
-                    VALUES (%s, "adjustment", %s, NOW())
+                    INSERT INTO monitoring (main_id, action, time_taken, time_input, remarks)
+                    VALUES (%s, "adjustment", %s, NOW(), %s)
                     """
-                    cursor.execute(sql_insert, (str(main_id), elasped_time,))
+                    cursor.execute(sql_insert, (str(main_id), elasped_time, name,))
                     connection.commit()
 
                     message = json.dumps({"command": "qas"})

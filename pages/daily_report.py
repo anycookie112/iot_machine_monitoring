@@ -186,7 +186,12 @@ layout =  html.Div([
             html.H5(
                 id="dt_info",
                 children=f"Total Downtime: {downtime_info['overall_totaldt']} | Shift 1 Downtime: {downtime_info['shift_1_totaldt']} | Shift 2 Downtime: {downtime_info['shift_2_totaldt']}",
-                style={"textAlign": "center", "fontSize": "13px", "marginBottom": "10px"}
+                style={"textAlign": "center", "fontSize": "25px", "marginBottom": "10px"}
+            ),
+            html.H5(
+                id="ma_info",
+                children=f"Total Change Mould Time: {downtime_info['overall_totaldt']} | Total Adjustment Time: {downtime_info['shift_1_totaldt']} ",
+                style={"textAlign": "center", "fontSize": "25px", "marginBottom": "10px"}
             ),
 
             dcc.Graph(id="overall_report", figure=daily_report_graph, style={"height": "300px"})
@@ -298,6 +303,7 @@ def update_shift_data(selected_row, date):
     Output("dt_info", "children"),  
     Output('date-picker-summary', 'date'),
     Output('ag-grid-mould', 'rowData'),
+    Output('ma_info', 'children'),
     Input("date-picker", 'date'),  
 )
 def update_shift_data(date):
@@ -309,8 +315,10 @@ def update_shift_data(date):
 
         dt_info = f"Total Downtime: {downtime_info['overall_totaldt']} minutes | Shift 1 Downtime: {downtime_info['shift_1_totaldt']} minutes | Shift 2 Downtime: {downtime_info['shift_2_totaldt']} minutes" 
         # mould_info = f"Mould Change Date: {}, Mould Change Time {} Adjustment Time {}"
-        mould_info = get_mould_activities(date)
-        return df_report.to_dict("records"), daily_report_graph, dt_info, date, mould_info.to_dict("records")  # Update the grid with new data
+        mould_info, total_change_mould, total_adjustment = get_mould_activities(date)
+        ma_info =f"Total Change Mould Time: {total_change_mould} Hours | Total Adjustment Time: {total_adjustment} Hours",
+
+        return df_report.to_dict("records"), daily_report_graph, dt_info, date, mould_info.to_dict("records"), ma_info  # Update the grid with new data
     return []
     
 
