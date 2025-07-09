@@ -579,7 +579,7 @@ def get_main_id (mp_id):
 def get_mould_activities(date):
     
     start_date, mid_time, end_date = date_calculation_new(date)
-    query = text("""SELECT monitoring.main_id, machine_code, mould_code, monitoring.action, time_taken, monitoring.time_input
+    query = text("""SELECT monitoring.main_id, machine_code, mould_code, monitoring.action, time_taken, monitoring.time_input, monitoring.remarks
             FROM monitoring
             inner join joblist
             on monitoring.main_id = joblist.main_id
@@ -613,10 +613,17 @@ def get_mould_activities(date):
 
 
     # Optional: reorder or drop old column
-    df = df[['main_id', 'machine_code', 'mould_code', 'action', 'time_taken_hr', 'time_start', 'time_ended']]
-    return df
+    df = df[['main_id', 'machine_code', 'mould_code', 'action', 'time_taken_hr', 'time_start', 'time_ended', 'remarks']]
+
+    # Ensure time_taken_hr is numeric
+    df['time_taken_hr'] = pd.to_numeric(df['time_taken_hr'], errors='coerce')
+
+    # Filter and sum
+    change_mould_total = df[df['action'] == 'change mould']['time_taken_hr'].sum()
+    adjustment_total = df[df['action'] == 'adjustment']['time_taken_hr'].sum()
+    return df, change_mould_total, adjustment_total
 
     
 
-test = get_mould_activities("2025-07-02")
-print(test)
+# df, x, y = get_mould_activities("2025-07-02")
+# print(df, x,y)
