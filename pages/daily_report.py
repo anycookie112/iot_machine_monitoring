@@ -207,6 +207,8 @@ layout =  html.Div([
                     {"headerName": "Duration (hr)", "field": "time_taken_hr"},
                     {"headerName": "Start", "field": "time_start"},
                     {"headerName": "End", "field": "time_ended"},
+                    {"headerName": "End", "field": "remarks"},
+
                 ],
                 defaultColDef={"resizable": True, "sortable": True, "filter": True, "flex": 1},
                 style={"height": "300px", "width": "100%"}
@@ -313,10 +315,34 @@ def update_shift_data(date):
 
         daily_report_graph = generate_bar_chart(df_report, f"Report ({date})")
 
-        dt_info = f"Total Downtime: {downtime_info['overall_totaldt']} minutes | Shift 1 Downtime: {downtime_info['shift_1_totaldt']} minutes | Shift 2 Downtime: {downtime_info['shift_2_totaldt']} minutes" 
+        overall_hrs = downtime_info['overall_totaldt'] // 60
+        overall_mins = downtime_info['overall_totaldt'] % 60
+
+        shift1_hrs = downtime_info['shift_1_totaldt'] // 60
+        shift1_mins = downtime_info['shift_1_totaldt'] % 60
+
+        shift2_hrs = downtime_info['shift_2_totaldt'] // 60
+        shift2_mins = downtime_info['shift_2_totaldt'] % 60
+
+        dt_info = (
+            f"Total Downtime: {overall_hrs:.1f} hrs {overall_mins:.2f} mins | "
+            f"Shift 1 Downtime: {shift1_hrs:.1f} hrs {shift1_mins:.2f} mins | "
+            f"Shift 2 Downtime: {shift2_hrs:.1f} hrs {shift2_mins:.2f} mins"
+        )        
         # mould_info = f"Mould Change Date: {}, Mould Change Time {} Adjustment Time {}"
         mould_info, total_change_mould, total_adjustment = get_mould_activities(date)
-        ma_info =f"Total Change Mould Time: {total_change_mould} Hours | Total Adjustment Time: {total_adjustment} Hours",
+
+        change_hrs = int(total_change_mould)
+        change_mins = int((total_change_mould - change_hrs) * 60)
+
+        adjust_hrs = int(total_adjustment)
+        adjust_mins = int((total_adjustment - adjust_hrs) * 60)
+
+        ma_info = (
+            f"Total Change Mould Time: {change_hrs:.1f} hrs {change_mins:.2f} mins | "
+            f"Total Adjustment Time: {adjust_hrs:.1f} hrs {adjust_mins:.2f} mins"
+)
+        # ma_info =f"Total Change Mould Time: {total_change_mould} Hours | Total Adjustment Time: {total_adjustment} Hours",
 
         return df_report.to_dict("records"), daily_report_graph, dt_info, date, mould_info.to_dict("records"), ma_info  # Update the grid with new data
     return []
