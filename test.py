@@ -237,8 +237,11 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
         mould_index = cols.index('mould_id')
         cols.insert(mould_index + 1, 'total_stops')
         merged = merged[cols]
+    
+    mp_id_list = merged["mp_id"].tolist()
 
-    return merged, {"shift_1_totaldt": shift1_totaldt, "shift_2_totaldt": shift2_totaldt, "overall_totaldt": overall_totaldt}
+
+    return merged, {"shift_1_totaldt": shift1_totaldt, "shift_2_totaldt": shift2_totaldt, "overall_totaldt": overall_totaldt}, mp_id_list
 
 
 def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
@@ -410,171 +413,30 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
 
 
 
-def previous_month_dates(date=datetime.now()):
-    # Get the current date
-    # today = datetime.now()
-    # Calculate the first day of the current month
-    first_day_current_month = date.replace(day=1)
-    # Subtract one day to get the last day of the previous month
-    last_day_previous_month = first_day_current_month - timedelta(days=1)
-    # Replace the day to 1 to get the first day of the previous month
-    first_day_previous_month = last_day_previous_month.replace(day=1)
-    return first_day_previous_month, last_day_previous_month
-
-
-"""
-
-so query all the data from monitoring
-
-"""
-
-
-def fetch_data_monthly(machine_selected, date= datetime.now()):
-
-    start_time, end_time = previous_month_dates(date)
-
+def get_main_id(mp_id):
     query = text("""
-        SELECT monitoring.*, production.mould_id, production.machine_code
-        FROM machine_monitoring.monitoring AS monitoring
-        INNER JOIN machine_monitoring.mass_production AS production
-            ON monitoring.mp_id = production.mp_id
-        WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-        AND monitoring.action IN ('downtime');
+        SELECT DISTINCT main_id 
+        FROM machine_monitoring.monitoring
+        WHERE mp_id IN :mp_id;
     """)
-
-    query2 = text("""
-        SELECT monitoring.*, production.mould_id, production.machine_code
-        FROM machine_monitoring.monitoring AS monitoring
-        INNER JOIN machine_monitoring.mass_production AS production
-            ON monitoring.mp_id = production.mp_id
-        WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-        AND monitoring.action IN ('normal_cycle');
-    """)
-
-    # Run query and load into a DataFrame
-    with db_connection_str.connect() as connection:
-
-        df_unique = pd.read_sql(query2, connection, params={
-            "start_time": start_time,
-            "end_time": end_time
-        })
-
-        # Get unique machine_code and corresponding mould_id
-        machines_running = df_unique.groupby([ "machine_code"])["mould_id"].first().reset_index()
-        # print(machines_running)
-
-        # Convert to DataFrame
-        df_main = pd.DataFrame(machines_running)
-        # print(df_main)
-
-        df = pd.read_sql(query, connection, params={
-            "start_time": start_time,
-            "end_time": end_time
-        })
-
-        df['time_input'] = pd.to_datetime(df['time_input'])
-        df["day"] = df["time_input"].dt.date
-
-        # print(df)
-            # Aggregate data for Shift 1
-        df_overall = df_detailed = df.groupby(["machine_code"]).agg(
-            month_total_stop=("idmonitoring", "count"),
-            month_total_dt=("time_taken", "sum")
-        ).reset_index()  
-
-
-
-        df_detailed = df.groupby(["machine_code", "mould_id"]).agg(
-            month_total_stop=("idmonitoring", "count"),
-            month_total_dt=("time_taken", "sum")
-        ).reset_index()    
-
-        df_detailed["stop_percentage"] = (
-        df_detailed["month_total_stop"] / 
-        df_detailed.groupby("machine_code")["month_total_stop"].transform("sum")
-    ) * 100
-        df_detailed["stop_percentage"] = df_detailed["stop_percentage"].round(2)
-        filtered_df_detailed = df_detailed[df_detailed['machine_code'] == machine_selected]
-        # filtered_df_overall = df_overall[df_detailed['machine_code'] == machine_selected]
-
-
-
-
-    return df_overall, filtered_df_detailed
-
-
-def monthly(machine_code=None, date=datetime.now()):
-
-    if machine_code == None:
-        # print("No machine code provided.")
-        return go.Figure()
-    else:
-        start_time, end_time = previous_month_dates(date)
-
-        query = text("""
-            SELECT monitoring.*, production.mould_id, production.machine_code
-            FROM machine_monitoring.monitoring AS monitoring
-            INNER JOIN machine_monitoring.mass_production AS production
-                ON monitoring.mp_id = production.mp_id
-            WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-            AND monitoring.action IN ('downtime')
-            AND production.machine_code IN (:machine_code);
-        """)
-
-        # Run query and load into a DataFrame
-        with db_connection_str.connect() as connection:
-            df_filtered = pd.read_sql(query, connection, params={
-                "start_time": start_time,
-                "end_time": end_time,
-                "machine_code": machine_code
-            })
-
-        # print(df_filtered)
-        df_filtered['time_input'] = pd.to_datetime(df_filtered['time_input'])
-        df_filtered["day"] = df_filtered["time_input"].dt.date
-
-        month_range = pd.DataFrame({
-            "day": pd.date_range(start=start_time, end=end_time)
-        })
-
-        # Convert to date only (no time part)
-        month_range["day"] = month_range["day"].dt.date
-
-        grouped = df_filtered.groupby(["day"]).size().reset_index(name="stops")
-
-        # Convert 'day' in grouped to date only
-        grouped["day"] = pd.to_datetime(grouped["day"]).dt.date
-
-        # Merge
-        daily = month_range.merge(grouped, on="day", how="left").fillna(0)
-        daily["stops"] = daily["stops"].astype(int)
-
-        return daily
-
-def get_main_id (mp_id):
-
-    query = text (f"""SELECT main_id FROM machine_monitoring.monitoring
-                where mp_id = :mp_id
-                limit 1 """)
     
     with db_connection_str.connect() as connection:
-        df_filtered = pd.read_sql(query, connection, params={
-            "mp_id": mp_id,
-        })
+        df_filtered = pd.read_sql(query, connection, params={"mp_id": tuple(mp_id)})
 
-    main_id = df_filtered["main_id"].loc[0]
+    return df_filtered["main_id"].tolist()
 
-    query = text("""SELECT action, time_taken, time_input FROM machine_monitoring.monitoring
-                where main_id = :main_id
-                limit 2""")
+
+    # query = text("""SELECT action, time_taken, time_input FROM machine_monitoring.monitoring
+    #             where main_id = :main_id
+    #             limit 2""")
     
-    with db_connection_str.connect() as connection:
-        df_change_mould_info = pd.read_sql(query, connection, params={
-            "main_id": main_id,
-        })
-    df_dict = df_change_mould_info.to_dict(orient='records')
+    # with db_connection_str.connect() as connection:
+    #     df_change_mould_info = pd.read_sql(query, connection, params={
+    #         "main_id": main_id,
+    #     })
+    # df_dict = df_change_mould_info.to_dict(orient='records')
 
-    return df_dict
+
 
 def get_mould_activities(date):
     
@@ -649,11 +511,142 @@ def calculate_efficiency_daily():
 
     pass
 
+# print(get_main_id(250))
 
 
 
+def get_mould_info(main_id):
+    # main_id_list = get_main_id(mp_id)
+
+    # if not main_id_list:
+    #     return []
+
+    query1 = text("""
+        SELECT DISTINCT main_id, part_name, part_code, cycle_time_rev 
+        FROM machine_monitoring.joblist AS j
+        JOIN machine_monitoring.mould_list AS ml 
+            ON j.mould_code = ml.mould_code
+        WHERE main_id IN :main_ids
+    """)
+
+    with db_connection_str.connect() as connection:
+        df_filtered = pd.read_sql(query1, connection, params={
+            "main_ids": tuple(main_id)
+        })
+
+    # If you only want data for the first main_id for the second query
 
 
+    df_unique = df_filtered.drop_duplicates(subset="main_id", keep="first")
+
+
+    return df_unique
+
+
+def unpivot():
+    query = text("""
+        SELECT monitoring.main_id, mp_id, action, time_taken
+        FROM machine_monitoring.monitoring AS monitoring
+        WHERE monitoring.time_input BETWEEN '2025-07-17' AND '2025-07-18'
+    """)
+
+    with db_connection_str.connect() as connection:
+        df = pd.read_sql(query, connection)
+
+    # Count how many times each (main_id, mp_id) had a 'normal_cycle' action
+    df_normal_cycle_count = (
+        df[df["action"] == "normal_cycle"]
+        .groupby(["main_id", "mp_id"])
+        .size()
+        .reset_index(name="normal_cycle_count")
+    )
+
+    # Group and sum time_taken for each action
+    df_grouped = (
+        df.groupby(["main_id", "mp_id", "action"], as_index=False)["time_taken"].sum()
+    )
+
+    # Pivot to make actions columns
+    df_pivot = df_grouped.pivot(
+        index=["main_id", "mp_id"],
+        columns="action",
+        values="time_taken"
+    ).reset_index()
+
+    df_result = pd.merge(df_pivot, df_normal_cycle_count, on=["main_id", "mp_id"], how="left")
+
+    # Optional: Fill NaN with 0
+    df_result["normal_cycle_count"] = df_result["normal_cycle_count"].fillna(0).astype(int)
+
+    main_id_list = df_pivot["main_id"].tolist()
+
+    mould_info = get_mould_info(main_id_list)
+
+    # # 3. (Optional) Flatten column names
+    # df_pivot.columns.name = None  # Remove the 'action' label on the columns
+
+    df_joined = pd.merge(df_result, mould_info, on="main_id", how="inner")  # or "left", "right", "outer"
+
+    # Replace NaNs in downtime and abnormal_cycle with 0
+    df_joined["downtime"] = df_joined["downtime"].fillna(0)
+    df_joined["abnormal_cycle"] = df_joined["abnormal_cycle"].fillna(0)
+
+    # Calculate total time
+    df_joined["total_time"] = df_joined["abnormal_cycle"] + df_joined["downtime"] + df_joined["normal_cycle"]
+
+    # Calculate efficiency
+    df_joined["efficiency"] = (
+        (df_joined["cycle_time_rev"] * df_joined["normal_cycle_count"]) / df_joined["total_time"]
+    ) * 100
+
+    df_joined["efficiency"] = df_joined["efficiency"].round(2)
+
+
+    print(df_joined)
+    # return df_pivot
 
 # df, x, y = get_mould_activities("2025-07-02")
 # print(df, x,y)
+
+# print(get_mould_info(250))
+
+
+
+
+
+# print(main_id)
+
+
+# x,y, mp_id = daily_report()
+
+# main_id = get_mould_info(mp_id)
+
+# print(mp_id)
+unpivot()
+
+
+"""
+
+in theory 
+machine a
+
+
+so find the stast time of each machine 
+and end time 
+based on that calculate the hours
+
+so like 8-8 means 24 hours
+3-6 means 3 hours
+
+based on machine 
+so means i see the machine on specific day what is start and stop
+
+
+
+so join table
+query first and last log of machine 
+
+
+
+
+"""

@@ -16,8 +16,8 @@ sidebar = html.Div(
             [
                 dbc.NavLink("Home", href="/", active="exact"), 
                 dbc.NavLink("Machine Status", href="/page-1", active="exact"),
-                dbc.NavLink("Mould Service Status", href="/page-2", active="exact"),
-                dbc.NavLink("Machine Output", href="/page-3", active="exact"),
+                # dbc.NavLink("Mould Service Status", href="/page-2", active="exact"),
+                # dbc.NavLink("Machine Output", href="/page-3", active="exact"),
                 dbc.NavLink("Daily Report", href="/daily", active="exact"),
                 dbc.NavLink("Monthly Report", href="/monthly", active="exact"),
 

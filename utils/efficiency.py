@@ -155,6 +155,8 @@ def calculate_downtime_df_daily_report(mp_id, date= datetime.now().date()):
 
     return outliers, df
 
+
+
 # def calculate_downtime_daily_report(mp_id, date= datetime.now().date()):
 #     # Connect to the database
 #     db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
@@ -209,11 +211,11 @@ def calculate_downtime_df_daily_report(mp_id, date= datetime.now().date()):
 #     # return { "production_time": total_running, "ideal_time":ideal_time, "downtime": downtime, "efficiency": efficiency , "total_times_stoped": total_stop, "total_shots": total_shots}
 #     return filtered_df, { "production_time": total_running, "ideal_time":ideal_time, "downtime": downtime, "efficiency": efficiency , "total_times_stoped": total_stop, "median_cycle_time": median_cycle_time, "total_shots": total_shots,"start_time": start_time,"end_time": end_time}
 
-mp_id = 99
-update_sql(mp_id)
-# outliers_df, full_df = calculate_downtime_df(mp_id)
+# mp_id = 99
+# update_sql(mp_id)
+# # outliers_df, full_df = calculate_downtime_df(mp_id)
 
-df, result2 = calculate_downtime_df_daily_report(mp_id)
+# df, result2 = calculate_downtime_df_daily_report(mp_id)
 
 # # print(len(outliers_df))
 # # print(full_df)
@@ -221,3 +223,6 @@ df, result2 = calculate_downtime_df_daily_report(mp_id)
 # print(df)
 # print(result2)
 
+# x, y = calculate_downtime(200)
+
+# print(x,y)

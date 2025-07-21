@@ -86,7 +86,7 @@ def generate_bar_chart_shift(shift_data, title):
     return fig
 
 
-shift1, shift2 = hourly(79)
+shift1, shift2 = hourly(240)
 
 df_report, downtime_info = daily_report()
 
@@ -325,9 +325,9 @@ def update_shift_data(date):
         shift2_mins = downtime_info['shift_2_totaldt'] % 60
 
         dt_info = (
-            f"Total Downtime: {overall_hrs:.1f} hrs {overall_mins:.2f} mins | "
-            f"Shift 1 Downtime: {shift1_hrs:.1f} hrs {shift1_mins:.2f} mins | "
-            f"Shift 2 Downtime: {shift2_hrs:.1f} hrs {shift2_mins:.2f} mins"
+            f"Total Downtime: {overall_hrs:.0f} hrs {overall_mins:.0f} mins | "
+            f"Shift 1 Downtime: {shift1_hrs:.0f} hrs {shift1_mins:.0f} mins | "
+            f"Shift 2 Downtime: {shift2_hrs:.0f} hrs {shift2_mins:.0f} mins"
         )        
         # mould_info = f"Mould Change Date: {}, Mould Change Time {} Adjustment Time {}"
         mould_info, total_change_mould, total_adjustment = get_mould_activities(date)
@@ -339,8 +339,8 @@ def update_shift_data(date):
         adjust_mins = int((total_adjustment - adjust_hrs) * 60)
 
         ma_info = (
-            f"Total Change Mould Time: {change_hrs:.1f} hrs {change_mins:.2f} mins | "
-            f"Total Adjustment Time: {adjust_hrs:.1f} hrs {adjust_mins:.2f} mins"
+            f"Total Change Mould Time: {change_hrs:.0f} hrs {change_mins:.0f} mins | "
+            f"Total Adjustment Time: {adjust_hrs:.0f} hrs {adjust_mins:.0f} mins"
 )
         # ma_info =f"Total Change Mould Time: {total_change_mould} Hours | Total Adjustment Time: {total_adjustment} Hours",
 
