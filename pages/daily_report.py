@@ -103,18 +103,20 @@ grid_daily = dag.AgGrid(
     rowData=df_report.to_dict("records"),
     dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
     columnDefs=[
-        {
-            "field": i,
-            "wrapHeaderText": True,
-            "autoHeaderHeight": True
-        } for i in [
-            "mp_id", "machine_code", 'mould_id',
-            'shift_1_stops',"shift_1_downtime_minutes",
-            'shift_2_stops', "shift_2_downtime_minutes",
-            'min_cycle_time', 'median_cycle_time',
-            'max_cycle_time', 'variance'
-        ]
-    ],
+        
+        {"field": "machine_code", "headerName": "Machine", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "mould_id", "headerName": "Mould", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "shift_1_stops", "headerName": "Shift 1 Stops", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "shift_1_downtime_minutes", "headerName": "S-1 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "shift_2_stops", "headerName": "Shift 2 Stops", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "shift_2_downtime_minutes", "headerName": "S-2 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "min_cycle_time", "headerName": "Max Cycle Time (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "median_cycle_time", "headerName": "Median Cycle Time (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "max_cycle_time", "headerName": "Min Cycle Time (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "variance", "headerName": "Cycle Time Variance", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "mp_id", "headerName": "MP ID", "wrapHeaderText": True, "autoHeaderHeight": True},
+    ]
+    ,
     columnSize="autoSize",
 )
 

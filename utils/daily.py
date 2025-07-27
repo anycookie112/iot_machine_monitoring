@@ -177,12 +177,13 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
 
     # If there's no data at all, return an empty DataFrame with the expected columns
     if shift1.empty and shift2.empty and df_unique_raw.empty:
-        return pd.DataFrame(columns=[
+        return (pd.DataFrame(columns=[
             "mp_id", "machine_code", "mould_id", "total_stops",
             "shift_1_stops", "shift_1_downtime",
             "shift_2_stops", "shift_2_downtime",
             # add any other columns expected from information_df below
-        ])
+        ]),
+    {"shift_1_totaldt": 0, "shift_2_totaldt": 0, "overall_totaldt": 0})
 
     information_df = fetch_data_variation(date)
 
@@ -237,6 +238,7 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
         mould_index = cols.index('mould_id')
         cols.insert(mould_index + 1, 'total_stops')
         merged = merged[cols]
+    print("Returning from daily_report:", merged)
 
     return merged, {"shift_1_totaldt": shift1_totaldt, "shift_2_totaldt": shift2_totaldt, "overall_totaldt": overall_totaldt}
 
@@ -272,13 +274,13 @@ def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, m
 
         shift1 = shift1_hours.merge(
             grouped[grouped["shift"] == "Shift 1"], on="hour", how="left"
-        ).fillna(0)
+        ).fillna(0).infer_objects(copy=False)
         shift1["stops"] = shift1["stops"].astype(int)
         shift1["shift"] = "Shift 1"
 
         shift2 = shift2_hours.merge(
             grouped[grouped["shift"] == "Shift 2"], on="hour", how="left"
-        ).fillna(0)
+        ).fillna(0).infer_objects(copy=False)
         shift2["stops"] = shift2["stops"].astype(int)
         shift2["shift"] = "Shift 2"
 
@@ -578,10 +580,11 @@ def get_main_id (mp_id):
 
 def get_mould_activities(date):
     
+    # date = datetime.strptime(date, "%Y-%m-%d").date()
     start_date, mid_time, end_date = date_calculation_new(date)
     query = text("""SELECT monitoring.main_id, machine_code, mould_code, monitoring.action, time_taken, monitoring.time_input, monitoring.remarks
             FROM monitoring
-            inner join joblist
+            inner join joblist  
             on monitoring.main_id = joblist.main_id
             WHERE action IN ('adjustment', 'change mould')
             AND monitoring.time_input between :start_date AND :end_date;
@@ -593,8 +596,15 @@ def get_mould_activities(date):
             "end_date": end_date
         })
 
+    # print("Columns in df:", df.columns.tolist())
+    # print("time_input dtype:", df['time_input'].dtype)
+    # print("time_input sample:", df['time_input'].head())
+
+    # df['time_start'] = pd.to_datetime(df['time_input'])
     # Convert to datetime
-    df['time_input'] = pd.to_datetime(df['time_input'])
+    df['time_input'] = pd.to_datetime(df['time_input'], errors='coerce')
+
+    # df['time_input'] = pd.to_datetime(df['time_input'])
 
     # Rename time_input to time_ended
     df.rename(columns={'time_input': 'time_ended'}, inplace=True)
@@ -603,11 +613,19 @@ def get_mould_activities(date):
     df['time_taken_hr'] = (df['time_taken'] / 3600).round(2)
 
 
-    # Compute time_start
+    # Ensure 'time_ended' is datetime
+    df['time_ended'] = pd.to_datetime(df['time_ended'], errors='coerce')
+
+    # Compute time_start using timedelta subtraction
     df['time_start'] = df.apply(
         lambda row: row['time_ended'] - timedelta(seconds=row['time_taken']) if pd.notnull(row['time_taken']) else pd.NaT,
         axis=1
     )
+
+    # Ensure 'time_start' is datetime
+    df['time_start'] = pd.to_datetime(df['time_start'], errors='coerce')
+
+    # Format both time_start and time_ended as 'HH:MM'
     df['time_start'] = df['time_start'].dt.strftime('%H:%M')
     df['time_ended'] = df['time_ended'].dt.strftime('%H:%M')
 
@@ -651,6 +669,92 @@ def calculate_efficiency_daily():
 
 
 
+
+def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
+    
+    if isinstance(date, str):
+        date = datetime.strptime(date, "%Y-%m-%d")
+    
+    start_time, _, end_time = date_calculation(date)
+    query = text("""WITH change_mould_adjustment AS (
+    SELECT 
+            joblist.machine_code,
+            SUM(CASE WHEN monitoring.action = 'change mould' THEN monitoring.time_taken ELSE 0 END) AS total_change_mould,
+            SUM(CASE WHEN monitoring.action = 'adjustment' THEN monitoring.time_taken ELSE 0 END) AS total_adjustment
+        FROM machine_monitoring.monitoring
+        INNER JOIN joblist ON monitoring.main_id = joblist.main_id
+        WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+        AND monitoring.action IN ('change mould', 'adjustment')
+        GROUP BY joblist.machine_code
+    )
+
+    SELECT 
+        mass_production.machine_code,
+        
+        SUM(monitoring.time_taken) AS total_time_taken,
+
+        SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN monitoring.time_taken ELSE 0 END) AS normal_cycle_time,
+        SUM(CASE WHEN monitoring.action = 'abnormal_cycle' THEN monitoring.time_taken ELSE 0 END) AS abnormal_cycle_time,
+        SUM(CASE WHEN monitoring.action = 'downtime' THEN monitoring.time_taken ELSE 0 END) AS downtime_time,
+
+        SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN 1 ELSE 0 END) AS shot_count,
+
+        MIN(monitoring.time_input) AS first_input_time,
+        MAX(monitoring.time_input) AS last_input_time,
+        TIMEDIFF(MAX(monitoring.time_input), MIN(monitoring.time_input)) AS total_running_time,
+
+        ROUND(
+            SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN monitoring.time_taken ELSE 0 END) / 
+            TIME_TO_SEC(TIMEDIFF(MAX(monitoring.time_input), MIN(monitoring.time_input))) * 100, 
+            2
+        ) AS efficiency_percent,
+
+        IFNULL(MAX(cma.total_change_mould), 0) AS total_change_mould,
+        IFNULL(MAX(cma.total_adjustment), 0) AS total_adjustment
+
+    FROM 
+        mass_production
+    INNER JOIN monitoring ON monitoring.mp_id = mass_production.mp_id
+    LEFT JOIN change_mould_adjustment cma ON mass_production.machine_code = cma.machine_code
+    WHERE 
+        monitoring.time_input BETWEEN :start_time AND :end_time
+    GROUP BY 
+        mass_production.machine_code;
+    """)
+
+        # Run query and load into a DataFrame
+    with db_connection_str.connect() as connection:
+
+        df = pd.read_sql(query, connection, params={
+            "start_time": start_time,
+            "end_time": end_time
+        })
+    
+    # Convert to timedelta
+    df['total_running_time'] = pd.to_timedelta(df['total_running_time'])
+
+    # Compute machine capacity as % of 24 hours
+    df['machine_capacity'] = (df['total_running_time'].dt.total_seconds() / 86400 * 100).round(2)
+
+    
+
+    total_machine_capacity = df['machine_capacity'].sum()
+    ideal_running_machine_capacity = 100 * len(df)
+
+    ideal_overall_machine_capacity = 100 * 23
+    
+
+    actual_capacity_running = ((total_machine_capacity / ideal_running_machine_capacity) * 100).round(2)
+    actual_capacity_overall = ((total_machine_capacity / ideal_overall_machine_capacity) * 100).round(2)
+
+    # print(actual_capacity_overall)
+    # print(actual_capacity_running)
+
+    return df, actual_capacity_overall, actual_capacity_running
+
+
+
+print(efficiency_sql_only("2025-07-24"))
 
 
 
