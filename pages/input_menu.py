@@ -352,6 +352,15 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
 
                 sql_insert = "INSERT INTO joblist (machine_code, mould_code, time_input) VALUES (%s, %s, NOW())"
                 cursor.execute(sql_insert, (str(machine_id), str(mould_id)))
+                main_id = cursor.lastrowid
+
+
+                sql_insert_log = """
+                INSERT INTO monitoring (main_id, action, time_taken, time_input)
+                VALUES (%s, "change mould start", %s, NOW())
+                """
+                cursor.execute(sql_insert_log, (str(main_id), 0,))
+
                 connection.commit()
 
                 message = json.dumps({"command": "ums"})
@@ -409,7 +418,7 @@ def change_mould_end(ume, yes, no, is_open, machine_id):
                     main_id = result[0]
                     sql_insert = """
                     INSERT INTO monitoring (main_id, action, time_taken, time_input)
-                    VALUES (%s, "change mould", %s, NOW())
+                    VALUES (%s, "change mould end", %s, NOW())
                     """
                     cursor.execute(sql_insert, (str(main_id), elasped_time,))
                     connection.commit()
@@ -472,6 +481,26 @@ def adjustment(qas, alert, machine_id):
             connection.commit()
             toggle_machine_timer(machine_id)
 
+            sql_select = """SELECT main_id
+                FROM joblist
+                WHERE machine_code = %s
+                ORDER BY main_id DESC
+                LIMIT 1
+                """
+            cursor.execute(sql_select, (str(machine_id),))
+            result = cursor.fetchone()
+
+            if result:
+                main_id = result[0]
+                elasped_time = toggle_machine_timer(machine_id)
+
+                sql_insert = """
+                INSERT INTO monitoring (main_id, action, time_taken, time_input)
+                VALUES (%s, "adjustment start", %s, NOW())
+                """
+                cursor.execute(sql_insert, (str(main_id), elasped_time, ))
+                connection.commit()
+
 
             message = json.dumps({"command": "qas"})
             publish_message(mqtt_machine, message, qos=2)  
@@ -531,7 +560,7 @@ def adjustment_end(ume, yes, no, name, is_open, machine_id):
 
                     sql_insert = """
                     INSERT INTO monitoring (main_id, action, time_taken, time_input, remarks)
-                    VALUES (%s, "adjustment", %s, NOW(), %s)
+                    VALUES (%s, "adjustment end", %s, NOW(), %s)
                     """
                     cursor.execute(sql_insert, (str(main_id), elasped_time, name,))
                     connection.commit()
