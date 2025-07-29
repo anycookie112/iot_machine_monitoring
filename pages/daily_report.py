@@ -9,7 +9,7 @@ import datetime
 from datetime import datetime, timedelta, date
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
+from utils.daily import efficiency_sql_only
 from utils.daily import daily_report, hourly, calculate_downtime_daily_report, get_mould_activities
 from utils.efficiency import  calculate_downtime_df_daily_report
 from config.config import DB_CONFIG
@@ -104,16 +104,16 @@ grid_daily = dag.AgGrid(
     dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
     columnDefs=[
         
-        {"field": "machine_code", "headerName": "Machine", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "machine_code", "headerName": "MC", "wrapHeaderText": True, "autoHeaderHeight": True},
         {"field": "mould_id", "headerName": "Mould", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "shift_1_stops", "headerName": "Shift 1 Stops", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "shift_1_stops", "headerName": "S-1 Stops", "wrapHeaderText": True, "autoHeaderHeight": True},
         {"field": "shift_1_downtime_minutes", "headerName": "S-1 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "shift_2_stops", "headerName": "Shift 2 Stops", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "shift_2_stops", "headerName": "S-2 Stops", "wrapHeaderText": True, "autoHeaderHeight": True},
         {"field": "shift_2_downtime_minutes", "headerName": "S-2 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "min_cycle_time", "headerName": "Max Cycle Time (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "median_cycle_time", "headerName": "Median Cycle Time (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "max_cycle_time", "headerName": "Min Cycle Time (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "variance", "headerName": "Cycle Time Variance", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "min_cycle_time", "headerName": "Max CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "median_cycle_time", "headerName": "Median CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "max_cycle_time", "headerName": "Min CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "variance", "headerName": "CT Variance", "wrapHeaderText": True, "autoHeaderHeight": True},
         {"field": "mp_id", "headerName": "MP ID", "wrapHeaderText": True, "autoHeaderHeight": True},
     ]
     ,
@@ -164,7 +164,85 @@ refresh_button = dbc.Button(
     className="mb-3",
 )
 
-layout =  html.Div([
+df, overall, running, eff = efficiency_sql_only("2025-07-24")
+
+# fallback if df is empty
+if df is None or df.empty:
+    df = pd.DataFrame(columns=[
+        "machine_code", "normal_cycle_time", "abnormal_cycle_time", "downtime",
+        "shot_count", "change_mould", "adjustment", "productivity", "machine_capacity"
+    ])
+
+# reusable card component
+def card(title, remarks, value=0, id=None):
+    return dbc.Card(
+        dbc.CardBody([
+            html.H4(title),
+            html.H6(remarks),
+            html.P(f"{value}%", className="card-text", id=id) if id else html.P(f"{value}%", className="card-text")
+        ]),
+        style={"width": "18rem"},
+    )
+
+# create Dash table component
+def create_table(dataframe):
+    column_rename_map = {
+        "machine_code": "Machine",
+        "total_time_taken": "Actual Avail (Hrs)",
+        "normal_cycle_time": "Actual Gain (Hrs)",
+        "abnormal_cycle_time": "Abnormal CT (Hrs)",
+        "downtime_time": "Downtime (Hr)",
+        "shot_count": "Shot Count",
+        "first_input_time": "Start Time",
+        "last_input_time": "End Time",
+        # "total_running_time": "Running Time",
+        "efficiency_percent": "Efficiency (%)",
+        "total_change_mould": "Change Moulds",
+        "total_adjustment": "Adjustments",
+        "machine_capacity": "Actual Gain Hr / 24 (%)"
+    }
+
+    formatted_df = dataframe.copy()
+    formatted_df.rename(columns=column_rename_map, inplace=True)
+
+    for col in formatted_df.columns:
+        if pd.api.types.is_datetime64_any_dtype(formatted_df[col]):
+            formatted_df[col] = formatted_df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+        elif pd.api.types.is_timedelta64_dtype(formatted_df[col]):
+            formatted_df[col] = formatted_df[col].astype(str)
+        else:
+            formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.2f}" if isinstance(x, float) else x)
+
+    header = html.Thead(html.Tr([html.Th(col) for col in formatted_df.columns]))
+
+    body = []
+    for i in range(len(formatted_df)):
+        row = []
+        for col in formatted_df.columns:
+            cell_value = formatted_df.iloc[i][col]
+
+            style = {}
+            # Highlight efficiency < 90%
+            if col == "Efficiency (%)" and float(cell_value) < 90:
+                style = {"backgroundColor": "#ffcccc", "fontWeight": "bold"}  # light red
+            # Highlight machine capacity == 100%
+            elif col == "Machine Capacity (%)" and float(cell_value) == 100:
+                style = {"backgroundColor": "#ccffcc", "fontWeight": "bold"}  # light green
+
+            row.append(html.Td(cell_value, style=style))
+        body.append(html.Tr(row))
+
+    return html.Table([header, html.Tbody(body)], className="table table-bordered")
+
+
+
+
+
+layout = html.Div([
+    dcc.Tabs([
+        
+        dcc.Tab(label='Daily Machine Stop', children=[
+            html.Div([
 
     html.Div([
     # Flex container
@@ -198,24 +276,7 @@ layout =  html.Div([
 
             dcc.Graph(id="overall_report", figure=daily_report_graph, style={"height": "300px"})
         ]),
-        html.Div([
-            dag.AgGrid(
-                id="ag-grid-mould",
-                rowData=[],
-                columnDefs=[
-                    {"headerName": "Machine", "field": "machine_code"},
-                    {"headerName": "Mould", "field": "mould_code"},
-                    {"headerName": "Action", "field": "action"},
-                    {"headerName": "Duration (hr)", "field": "time_taken_hr"},
-                    {"headerName": "Start", "field": "time_start"},
-                    {"headerName": "End", "field": "time_ended"},
-                    {"headerName": "End", "field": "remarks"},
 
-                ],
-                defaultColDef={"resizable": True, "sortable": True, "filter": True, "flex": 1},
-                style={"height": "300px", "width": "100%"}
-            )
-        ],)
     ],)
 ]),
 
@@ -263,6 +324,70 @@ layout =  html.Div([
 
     
 ], style={"padding": "20px", "fontFamily": "Arial, sans-serif", "backgroundColor": "#f4f6f9"})
+
+        ]),
+
+
+        dcc.Tab(label='Productivity', children=[
+            html.Div([
+
+                html.Div(
+                    [
+                        card("Overall Productivity", "TTL ACT AVAIL HR / TTL ACT GAIN HR", 0, id="overall-card"),
+                        card("Machine Productivity","TTL ACT GAIN HR / 24 X 18 ", 0, id="machine-card"),
+                        card("Overall Efficiency","AVG EFF ALL MC", 0, id="eff-card")
+                    ],
+                    className="d-flex justify-content-around mb-4"
+                ),
+                html.Div(id="productivity-table",
+                         className="mb-4",
+                         style={
+                             "padding": "20px",
+                             "border": "1px solid #ddd",
+                             "borderRadius": "10px",
+                             "backgroundColor": "#f9f9f9"
+                         }),
+                
+                html.Div([
+                    dag.AgGrid(
+                        id="ag-grid-mould",
+                        rowData=[],
+                        columnDefs=[
+                            {"headerName": "Machine", "field": "machine_code"},
+                            {"headerName": "Mould", "field": "mould_code"},
+                            {"headerName": "Action", "field": "action"},
+                            {"headerName": "Duration (hr)", "field": "time_taken_hr"},
+                            {"headerName": "Start", "field": "time_start"},
+                            {"headerName": "End", "field": "time_ended"},
+                            {"headerName": "Remarks", "field": "remarks"},
+
+                        ],
+                        defaultColDef={"resizable": True, "sortable": True, "filter": True, "flex": 1},
+                        style={"height": "300px", "width": "100%"}
+                    )
+                ],)
+
+                
+
+            ])
+        ]),
+        
+        # dcc.Tab(label='Tab three', children=[
+        #     dcc.Graph(
+        #         figure={
+        #             'data': [
+        #                 {'x': [1, 2, 3], 'y': [2, 4, 3],
+        #                     'type': 'bar', 'name': 'SF'},
+        #                 {'x': [1, 2, 3], 'y': [5, 4, 3],
+        #                  'type': 'bar', 'name': 'Montréal'},
+        #             ]
+        #         }
+        #     )
+        # ]),
+    ])
+])
+
+
 
 @callback(
     Output("shift1-graph", "figure"),  
@@ -350,7 +475,44 @@ def update_shift_data(date):
     return []
     
 
+@callback(
+    Output("productivity-table", "children"),
+    Output("overall-card", "children"),
+    Output("machine-card", "children"),
+    Output("eff-card", "children"),
+    Input("date-picker", "date"),
+)
+def update_productivity_table(selected_date):
+    if not selected_date:
+        return html.P("Please select a date."), "", ""
 
+    df, overall, running, eff = efficiency_sql_only(selected_date)
+
+    if df is None or df.empty:
+        df = pd.DataFrame(columns=[
+            "machine_code", "normal_cycle_time", "abnormal_cycle_time", "downtime",
+            "shot_count", "change_mould", "adjustment", "productivity", "machine_capacity"
+        ])
+        return html.P("No data available for the selected date."), "", ""
+
+    return (
+        html.Div([
+            html.H3(f"Productivity Data for {selected_date}", style={"textAlign": "center", "marginBottom": "20px"}),
+            create_table(df)
+        ]),
+        [
+            # html.H4("Overall Productivity"),
+            html.P(f"{overall}%", className="card-text")
+        ],
+        [
+            # html.H4("Machine Productivity"),
+            html.P(f"{running}%", className="card-text")
+        ],
+        [
+            # html.H4("Machine Productivity"),
+            html.P(f"{eff}%", className="card-text")
+        ]
+    )
 # @callback(
 #     Output("textarea", "value"),
 #     Input("update-button", "n_clicks"),

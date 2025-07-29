@@ -677,50 +677,50 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
     
     start_time, _, end_time = date_calculation(date)
     query = text("""WITH change_mould_adjustment AS (
-    SELECT 
-            joblist.machine_code,
-            SUM(CASE WHEN monitoring.action = 'change mould' THEN monitoring.time_taken ELSE 0 END) AS total_change_mould,
-            SUM(CASE WHEN monitoring.action = 'adjustment' THEN monitoring.time_taken ELSE 0 END) AS total_adjustment
-        FROM machine_monitoring.monitoring
-        INNER JOIN joblist ON monitoring.main_id = joblist.main_id
-        WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-        AND monitoring.action IN ('change mould', 'adjustment')
-        GROUP BY joblist.machine_code
-    )
+        SELECT 
+                joblist.machine_code,
+                SUM(CASE WHEN monitoring.action = 'change mould' THEN monitoring.time_taken ELSE 0 END) AS total_change_mould,
+                SUM(CASE WHEN monitoring.action = 'adjustment' THEN monitoring.time_taken ELSE 0 END) AS total_adjustment
+            FROM machine_monitoring.monitoring
+            INNER JOIN joblist ON monitoring.main_id = joblist.main_id
+            WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+            AND monitoring.action IN ('change mould', 'adjustment')
+            GROUP BY joblist.machine_code
+        )
 
-    SELECT 
-        mass_production.machine_code,
-        
-        SUM(monitoring.time_taken) AS total_time_taken,
+        SELECT 
+            mass_production.machine_code,
+            
+            SUM(monitoring.time_taken)/3600 AS total_time_taken,
 
-        SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN monitoring.time_taken ELSE 0 END) AS normal_cycle_time,
-        SUM(CASE WHEN monitoring.action = 'abnormal_cycle' THEN monitoring.time_taken ELSE 0 END) AS abnormal_cycle_time,
-        SUM(CASE WHEN monitoring.action = 'downtime' THEN monitoring.time_taken ELSE 0 END) AS downtime_time,
+            SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN monitoring.time_taken ELSE 0 END) /3600 AS normal_cycle_time,
+            SUM(CASE WHEN monitoring.action = 'abnormal_cycle' THEN monitoring.time_taken ELSE 0 END)/3600 AS abnormal_cycle_time,
+            SUM(CASE WHEN monitoring.action = 'downtime' THEN monitoring.time_taken ELSE 0 END)/3600 AS downtime_time,
 
-        SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN 1 ELSE 0 END) AS shot_count,
+            SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN 1 ELSE 0 END) AS shot_count,
 
-        MIN(monitoring.time_input) AS first_input_time,
-        MAX(monitoring.time_input) AS last_input_time,
-        TIMEDIFF(MAX(monitoring.time_input), MIN(monitoring.time_input)) AS total_running_time,
+            MIN(monitoring.time_input) AS first_input_time,
+            MAX(monitoring.time_input) AS last_input_time,
+            TIMEDIFF(MAX(monitoring.time_input), MIN(monitoring.time_input)) AS total_running_time,
 
-        ROUND(
-            SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN monitoring.time_taken ELSE 0 END) / 
-            TIME_TO_SEC(TIMEDIFF(MAX(monitoring.time_input), MIN(monitoring.time_input))) * 100, 
-            2
-        ) AS efficiency_percent,
+            ROUND(
+                SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN monitoring.time_taken ELSE 0 END) / 
+                SUM(monitoring.time_taken) * 100, 
+                2
+            ) AS efficiency_percent,
 
-        IFNULL(MAX(cma.total_change_mould), 0) AS total_change_mould,
-        IFNULL(MAX(cma.total_adjustment), 0) AS total_adjustment
+            IFNULL(MAX(cma.total_change_mould), 0) AS total_change_mould,
+            IFNULL(MAX(cma.total_adjustment), 0) AS total_adjustment
 
-    FROM 
-        mass_production
-    INNER JOIN monitoring ON monitoring.mp_id = mass_production.mp_id
-    LEFT JOIN change_mould_adjustment cma ON mass_production.machine_code = cma.machine_code
-    WHERE 
-        monitoring.time_input BETWEEN :start_time AND :end_time
-    GROUP BY 
-        mass_production.machine_code;
-    """)
+        FROM 
+            mass_production
+        INNER JOIN monitoring ON monitoring.mp_id = mass_production.mp_id
+        LEFT JOIN change_mould_adjustment cma ON mass_production.machine_code = cma.machine_code
+        WHERE 
+            monitoring.time_input BETWEEN :start_time AND :end_time
+        GROUP BY 
+            mass_production.machine_code;
+        """)
 
         # Run query and load into a DataFrame
     with db_connection_str.connect() as connection:
@@ -739,18 +739,20 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
     
 
     total_machine_capacity = df['machine_capacity'].sum()
+    actual_total_gain_hr = df['normal_cycle_time'].sum()
     ideal_running_machine_capacity = 100 * len(df)
 
-    ideal_overall_machine_capacity = 100 * 23
+    ideal_overall_machine_capacity = 100 * 18
     
 
     actual_capacity_running = ((total_machine_capacity / ideal_running_machine_capacity) * 100).round(2)
-    actual_capacity_overall = ((total_machine_capacity / ideal_overall_machine_capacity) * 100).round(2)
+    actual_machine_capacity_overall = ((actual_total_gain_hr / ideal_overall_machine_capacity) * 100).round(2)
+    overall_eff = (df['efficiency_percent'].sum()/len(df))
 
     # print(actual_capacity_overall)
     # print(actual_capacity_running)
 
-    return df, actual_capacity_overall, actual_capacity_running
+    return df, actual_machine_capacity_overall, actual_capacity_running, overall_eff 
 
 
 
