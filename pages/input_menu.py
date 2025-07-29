@@ -343,7 +343,7 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
             # If name is empty or just whitespace, do nothing (keep modal open)
             return True
         try:
-            toggle_machine_timer(machine_id)
+            # toggle_machine_timer(machine_id)
             # Database update
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
@@ -391,7 +391,7 @@ def change_mould_end(ume, yes, no, is_open, machine_id):
     # When "yes" is clicked, update the database and close the modal
     if triggered_id == "yes-1":
         try:
-            elasped_time = toggle_machine_timer(machine_id)
+            # elasped_time = toggle_machine_timer(machine_id)
             # Connect to the database
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
@@ -420,7 +420,7 @@ def change_mould_end(ume, yes, no, is_open, machine_id):
                     INSERT INTO monitoring (main_id, action, time_taken, time_input)
                     VALUES (%s, "change mould end", %s, NOW())
                     """
-                    cursor.execute(sql_insert, (str(main_id), elasped_time,))
+                    cursor.execute(sql_insert, (str(main_id), 0,))
                     connection.commit()
 
                     
@@ -461,17 +461,20 @@ ADJUSTMENT/ QA-QC
     [State("alert-auto", "is_open"), State("machine_id", "value")]
 )
 def adjustment(qas, alert, machine_id):
-    mqtt_machine = f"machines/{machine_id}"
-    # Check if the callback was triggered by the "qas" button
-    triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
-    if triggered_id != "qas":
-        # If not triggered by the button, do nothing (retain current state)
-        return dash.no_update
-
-    # Proceed with updating the database if "qas" was clicked
+    print("adjustment() called")
+    
     try:
+        triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
+        print("Triggered by:", triggered_id)
+        
+        if "qas" not in triggered_id:
+            return dash.no_update
+
         connection = create_engine(db_connection_str).raw_connection()
         with connection.cursor() as cursor:
+            print("Connected to DB")
+
+            # Update machine_list
             sql = """
             UPDATE machine_list 
             SET machine_status = 'adjustment/qa in progress'
@@ -479,39 +482,48 @@ def adjustment(qas, alert, machine_id):
             """
             cursor.execute(sql, (str(machine_id),))
             connection.commit()
-            toggle_machine_timer(machine_id)
 
-            sql_select = """SELECT main_id
-                FROM joblist
-                WHERE machine_code = %s
-                ORDER BY main_id DESC
-                LIMIT 1
-                """
+            # Get latest main_id
+            sql_select = """
+            SELECT main_id
+            FROM joblist
+            WHERE machine_code = %s
+            ORDER BY main_id DESC
+            LIMIT 1
+            """
             cursor.execute(sql_select, (str(machine_id),))
             result = cursor.fetchone()
+            print("Fetched main_id:", result)
 
-            if result:
-                main_id = result[0]
-                elasped_time = toggle_machine_timer(machine_id)
+            if not result:
+                print(f"No joblist entry found for machine_id={machine_id}")
+                return dash.no_update
 
-                sql_insert = """
-                INSERT INTO monitoring (main_id, action, time_taken, time_input)
-                VALUES (%s, "adjustment start", %s, NOW())
-                """
-                cursor.execute(sql_insert, (str(main_id), elasped_time, ))
-                connection.commit()
+            main_id = result[0]
 
+            sql_insert = """
+            INSERT INTO monitoring (main_id, action, time_taken, time_input)
+            VALUES (%s, 'adjustment start', %s, NOW())
+            """
+            cursor.execute(sql_insert, (str(main_id), 0))
+            connection.commit()
+            print("Insert success")
 
             message = json.dumps({"command": "qas"})
-            publish_message(mqtt_machine, message, qos=2)  
+            publish_message(f"machines/{machine_id}", message, qos=2)
 
-            return True  # Show the alert
+            return True
+
     except Exception as e:
-        print(f"Error updating database: {e}")
+        import traceback
+        print("DB Error:", e)
+        traceback.print_exc()
+
     finally:
         connection.close()
 
     return dash.no_update
+
 
 @callback(
     Output("confirmation-2", "is_open"),
@@ -556,13 +568,13 @@ def adjustment_end(ume, yes, no, name, is_open, machine_id):
 
                 if result:
                     main_id = result[0]
-                    elasped_time = toggle_machine_timer(machine_id)
+                    # elasped_time = toggle_machine_timer(machine_id)
 
                     sql_insert = """
                     INSERT INTO monitoring (main_id, action, time_taken, time_input, remarks)
                     VALUES (%s, "adjustment end", %s, NOW(), %s)
                     """
-                    cursor.execute(sql_insert, (str(main_id), elasped_time, name,))
+                    cursor.execute(sql_insert, (str(main_id), 0, name,))
                     connection.commit()
 
                     message = json.dumps({"command": "qas"})
