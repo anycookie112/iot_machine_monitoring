@@ -578,94 +578,75 @@ def get_main_id (mp_id):
 
     return df_dict
 
-def get_mould_activities(date):
+
+
+
+
+
+def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
+    if isinstance(date, str):
+        date = datetime.strptime(date, "%Y-%m-%d")
     
-    # date = datetime.strptime(date, "%Y-%m-%d").date()
-    start_date, mid_time, end_date = date_calculation_new(date)
-    query = text("""SELECT monitoring.main_id, machine_code, mould_code, monitoring.action, time_taken, monitoring.time_input, monitoring.remarks
-            FROM monitoring
-            inner join joblist  
-            on monitoring.main_id = joblist.main_id
-            WHERE action IN ('adjustment', 'change mould')
-            AND monitoring.time_input between :start_date AND :end_date;
-            """)    
-    
+    start_time, _, end_time = date_calculation(date)
+
+    query = text("""
+    SELECT 
+        machine_code, 
+        mould_code,
+        monitoring.action, 
+        monitoring.main_id,
+        monitoring.time_taken,
+        monitoring.time_input, 
+        monitoring.remarks 
+    FROM 
+        machine_monitoring.monitoring
+    INNER JOIN 
+        machine_monitoring.joblist 
+        ON monitoring.main_id = joblist.main_id
+    WHERE 
+        monitoring.action IN ('adjustment start', 'adjustment end', 'change mould start', 'change mould end')
+        AND monitoring.time_input BETWEEN :start_time AND :end_time;
+
+    """)
+
     with db_connection_str.connect() as connection:
+
         df = pd.read_sql(query, connection, params={
-            "start_date": start_date,
-            "end_date": end_date
+            "start_time": start_time,
+            "end_time": end_time
         })
 
-    # print("Columns in df:", df.columns.tolist())
-    # print("time_input dtype:", df['time_input'].dtype)
-    # print("time_input sample:", df['time_input'].head())
-
-    # df['time_start'] = pd.to_datetime(df['time_input'])
     # Convert to datetime
-    df['time_input'] = pd.to_datetime(df['time_input'], errors='coerce')
+    df['time_input'] = pd.to_datetime(df['time_input'])
 
-    # df['time_input'] = pd.to_datetime(df['time_input'])
+    # Normalize action
+    df['base_action'] = df['action'].str.replace(r' (start|end)$', '', regex=True)
 
-    # Rename time_input to time_ended
-    df.rename(columns={'time_input': 'time_ended'}, inplace=True)
+    # Extract start and end rows
+    start_df = df[df['action'].str.endswith('start')][
+        ['main_id', 'base_action', 'time_input', 'machine_code', 'mould_code']
+    ].rename(columns={'time_input': 'start_time'})
 
-    # Convert time_taken to hours
-    df['time_taken_hr'] = (df['time_taken'] / 3600).round(2)
+    end_df = df[df['action'].str.endswith('end')][
+        ['main_id', 'base_action', 'time_input', 'remarks']
+    ].rename(columns={'time_input': 'end_time'})
+
+    # Merge on main_id + action
+    merged = pd.merge(start_df, end_df, on=['main_id', 'base_action'], how='inner')
+
+    # Compute duration
+    merged['duration'] = merged['end_time'] - merged['start_time']
+    merged['duration_hr'] = (merged['duration'].dt.total_seconds() / 3600).round(2)
+
+    # Duration summaries
+    change_mould_total = merged[merged['base_action'] == 'change mould']['duration_hr'].sum()
+    adjustment_total = merged[merged['base_action'] == 'adjustment']['duration_hr'].sum()
+
+    # Final output
+    return merged[['machine_code', 'mould_code', 'main_id', 'base_action', 'start_time', 'end_time', 'duration_hr', 'remarks']], change_mould_total, adjustment_total
 
 
-    # Ensure 'time_ended' is datetime
-    df['time_ended'] = pd.to_datetime(df['time_ended'], errors='coerce')
 
-    # Compute time_start using timedelta subtraction
-    df['time_start'] = df.apply(
-        lambda row: row['time_ended'] - timedelta(seconds=row['time_taken']) if pd.notnull(row['time_taken']) else pd.NaT,
-        axis=1
-    )
-
-    # Ensure 'time_start' is datetime
-    df['time_start'] = pd.to_datetime(df['time_start'], errors='coerce')
-
-    # Format both time_start and time_ended as 'HH:MM'
-    df['time_start'] = df['time_start'].dt.strftime('%H:%M')
-    df['time_ended'] = df['time_ended'].dt.strftime('%H:%M')
-
-
-    # Optional: reorder or drop old column
-    df = df[['main_id', 'machine_code', 'mould_code', 'action', 'time_taken_hr', 'time_start', 'time_ended', 'remarks']]
-
-    # Ensure time_taken_hr is numeric
-    df['time_taken_hr'] = pd.to_numeric(df['time_taken_hr'], errors='coerce')
-
-    # Filter and sum
-    change_mould_total = df[df['action'] == 'change mould']['time_taken_hr'].sum()
-    adjustment_total = df[df['action'] == 'adjustment']['time_taken_hr'].sum()
-    return df, change_mould_total, adjustment_total
-
-    
-
-def calculate_efficiency_daily():
-    """
-    
-    get all rows of a certain mp_id on the day
-    sum all the rows on actions
-
-    shift 1 efficiency
-    shift 2 efficiency
-    overall effciency
-
-    efficiency = actual_time / total time
-
-    number of shots = sum of row where action = normal cycle
-
-    get main id join onto job list where main_id 
-    and mould id join onto mould list 
-
-    so efficiency will based on mp_id ?
-
-    
-    """
-
-    pass
 
 
 
@@ -678,9 +659,8 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
     start_time, _, end_time = date_calculation(date)
     query = text("""WITH change_mould_adjustment AS (
         SELECT 
-                joblist.machine_code,
-                SUM(CASE WHEN monitoring.action = 'change mould' THEN monitoring.time_taken ELSE 0 END) AS total_change_mould,
-                SUM(CASE WHEN monitoring.action = 'adjustment' THEN monitoring.time_taken ELSE 0 END) AS total_adjustment
+                joblist.machine_code
+
             FROM machine_monitoring.monitoring
             INNER JOIN joblist ON monitoring.main_id = joblist.main_id
             WHERE monitoring.time_input BETWEEN :start_time AND :end_time
@@ -707,15 +687,13 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
                 SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN monitoring.time_taken ELSE 0 END) / 
                 SUM(monitoring.time_taken) * 100, 
                 2
-            ) AS efficiency_percent,
+            ) AS efficiency_percent
 
-            IFNULL(MAX(cma.total_change_mould), 0) AS total_change_mould,
-            IFNULL(MAX(cma.total_adjustment), 0) AS total_adjustment
+
 
         FROM 
             mass_production
         INNER JOIN monitoring ON monitoring.mp_id = mass_production.mp_id
-        LEFT JOIN change_mould_adjustment cma ON mass_production.machine_code = cma.machine_code
         WHERE 
             monitoring.time_input BETWEEN :start_time AND :end_time
         GROUP BY 
@@ -729,34 +707,63 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
             "start_time": start_time,
             "end_time": end_time
         })
-    
+
+
+    if df.empty:
+        return df, 0.0, 0.0, 0.0
+
     # Convert to timedelta
     df['total_running_time'] = pd.to_timedelta(df['total_running_time'])
 
     # Compute machine capacity as % of 24 hours
     df['machine_capacity'] = (df['total_running_time'].dt.total_seconds() / 86400 * 100).round(2)
+    df = df.drop(columns=['total_running_time'])  # Drop if not needed later
 
-    
-
+    # Summary calculations
     total_machine_capacity = df['machine_capacity'].sum()
     actual_total_gain_hr = df['normal_cycle_time'].sum()
     ideal_running_machine_capacity = 100 * len(df)
-
     ideal_overall_machine_capacity = 100 * 18
-    
 
-    actual_capacity_running = ((total_machine_capacity / ideal_running_machine_capacity) * 100).round(2)
-    actual_machine_capacity_overall = ((actual_total_gain_hr / ideal_overall_machine_capacity) * 100).round(2)
-    overall_eff = (df['efficiency_percent'].sum()/len(df))
+    # Capacities and efficiency
+    actual_capacity_running = round((total_machine_capacity / ideal_running_machine_capacity) * 100, 2)
+    actual_machine_capacity_overall = round((actual_total_gain_hr / ideal_overall_machine_capacity) * 100, 2)
+    overall_eff = round((df['efficiency_percent'].sum() / len(df)), 2)
 
-    # print(actual_capacity_overall)
-    # print(actual_capacity_running)
-
-    return df, actual_machine_capacity_overall, actual_capacity_running, overall_eff 
+    return df, actual_machine_capacity_overall, actual_capacity_running, overall_eff
 
 
+# df_summary,_1,_2,_3 = efficiency_sql_only("2025-07-29")
+# print(df_summary)
 
-print(efficiency_sql_only("2025-07-24"))
+def combined_output(date):
+    df_summary, actual_machine_capacity_overall, actual_capacity_running, overall_eff = efficiency_sql_only(date)
+    df_actions, x, y = mould_activities(date)
+
+    pivot_actions = df_actions.pivot_table(
+        index='machine_code',
+        columns='base_action',
+        values='duration_hr',
+        aggfunc='sum'
+    ).reset_index()
+
+    pivot_actions.columns.name = None
+    pivot_actions = pivot_actions.rename(columns={
+        'change mould': 'total_change_mould_hr',
+        'adjustment': 'total_adjustment_hr'
+    })
+
+    # Add missing columns with 0 if not in pivoted actions
+    for col in ['total_change_mould_hr', 'total_adjustment_hr']:
+        if col not in pivot_actions.columns:
+            pivot_actions[col] = 0
+
+    df_merged = df_summary.merge(pivot_actions, on='machine_code', how='left')
+
+    df_merged[['total_change_mould_hr', 'total_adjustment_hr']] = df_merged[
+        ['total_change_mould_hr', 'total_adjustment_hr']].fillna(0)
+
+    return df_merged, actual_machine_capacity_overall, actual_capacity_running, overall_eff
 
 
 

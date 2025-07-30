@@ -9,8 +9,8 @@ import datetime
 from datetime import datetime, timedelta, date
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from utils.daily import efficiency_sql_only
-from utils.daily import daily_report, hourly, calculate_downtime_daily_report, get_mould_activities
+from utils.daily import combined_output
+from utils.daily import daily_report, hourly, calculate_downtime_daily_report, mould_activities
 from utils.efficiency import  calculate_downtime_df_daily_report
 from config.config import DB_CONFIG
 import plotly.graph_objects as go
@@ -104,17 +104,17 @@ grid_daily = dag.AgGrid(
     dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
     columnDefs=[
         
-        {"field": "machine_code", "headerName": "MC", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "mould_id", "headerName": "Mould", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "shift_1_stops", "headerName": "S-1 Stops", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "shift_1_downtime_minutes", "headerName": "S-1 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "shift_2_stops", "headerName": "S-2 Stops", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "shift_2_downtime_minutes", "headerName": "S-2 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "min_cycle_time", "headerName": "Max CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "median_cycle_time", "headerName": "Median CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "max_cycle_time", "headerName": "Min CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "variance", "headerName": "CT Variance", "wrapHeaderText": True, "autoHeaderHeight": True},
-        {"field": "mp_id", "headerName": "MP ID", "wrapHeaderText": True, "autoHeaderHeight": True},
+        {"field": "machine_code", "headerName": "MC", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 80},
+        {"field": "mould_id", "headerName": "Mould", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "shift_1_stops", "headerName": "S-1 Stops", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "shift_1_downtime_minutes", "headerName": "S-1 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True,"width": 150},
+        {"field": "shift_2_stops", "headerName": "S-2 Stops", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "shift_2_downtime_minutes", "headerName": "S-2 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 150},
+        {"field": "min_cycle_time", "headerName": "Max CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "median_cycle_time", "headerName": "Median CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "max_cycle_time", "headerName": "Min CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "variance", "headerName": "CT Variance", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "mp_id", "headerName": "MP ID", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 80},
     ]
     ,
     columnSize="autoSize",
@@ -164,7 +164,7 @@ refresh_button = dbc.Button(
     className="mb-3",
 )
 
-df, overall, running, eff = efficiency_sql_only("2025-07-24")
+df, overall, running, eff = combined_output("2025-07-29")
 
 # fallback if df is empty
 if df is None or df.empty:
@@ -197,8 +197,8 @@ def create_table(dataframe):
         "last_input_time": "End Time",
         # "total_running_time": "Running Time",
         "efficiency_percent": "Efficiency (%)",
-        "total_change_mould": "Change Moulds",
-        "total_adjustment": "Adjustments",
+        "total_change_mould_hr": "Change Moulds",
+        "total_adjustment_hr": "Adjustments",
         "machine_capacity": "Actual Gain Hr / 24 (%)"
     }
 
@@ -333,7 +333,7 @@ layout = html.Div([
 
                 html.Div(
                     [
-                        card("Overall Productivity", "TTL ACT AVAIL HR / TTL ACT GAIN HR", 0, id="overall-card"),
+                        card("Overall Productivity", "TTL ACT GAIN HR / TTL ACT AVAIL HR", 0, id="overall-card"),
                         card("Machine Productivity","TTL ACT GAIN HR / 24 X 18 ", 0, id="machine-card"),
                         card("Overall Efficiency","AVG EFF ALL MC", 0, id="eff-card")
                     ],
@@ -355,10 +355,10 @@ layout = html.Div([
                         columnDefs=[
                             {"headerName": "Machine", "field": "machine_code"},
                             {"headerName": "Mould", "field": "mould_code"},
-                            {"headerName": "Action", "field": "action"},
-                            {"headerName": "Duration (hr)", "field": "time_taken_hr"},
-                            {"headerName": "Start", "field": "time_start"},
-                            {"headerName": "End", "field": "time_ended"},
+                            {"headerName": "Action", "field": "base_action"},
+                            {"headerName": "Duration (hr)", "field": "duration_hr"},
+                            {"headerName": "Start", "field": "start_time"},
+                            {"headerName": "End", "field": "end_time"},
                             {"headerName": "Remarks", "field": "remarks"},
 
                         ],
@@ -457,7 +457,7 @@ def update_shift_data(date):
             f"Shift 2 Downtime: {shift2_hrs:.0f} hrs {shift2_mins:.0f} mins"
         )        
         # mould_info = f"Mould Change Date: {}, Mould Change Time {} Adjustment Time {}"
-        mould_info, total_change_mould, total_adjustment = get_mould_activities(date)
+        mould_info, total_change_mould, total_adjustment = mould_activities(date)
 
         change_hrs = int(total_change_mould)
         change_mins = int((total_change_mould - change_hrs) * 60)
@@ -486,7 +486,7 @@ def update_productivity_table(selected_date):
     if not selected_date:
         return html.P("Please select a date."), "", ""
 
-    df, overall, running, eff = efficiency_sql_only(selected_date)
+    df, overall, running, eff = combined_output(selected_date)
 
     if df is None or df.empty:
         df = pd.DataFrame(columns=[

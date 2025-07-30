@@ -463,6 +463,8 @@ ADJUSTMENT/ QA-QC
 def adjustment(qas, alert, machine_id):
     print("adjustment() called")
     
+    connection = None  # Ensure connection is always defined
+
     try:
         triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
         print("Triggered by:", triggered_id)
@@ -520,9 +522,11 @@ def adjustment(qas, alert, machine_id):
         traceback.print_exc()
 
     finally:
-        connection.close()
+        if connection:  # Only close if it was assigned
+            connection.close()
 
     return dash.no_update
+
 
 
 @callback(
@@ -640,9 +644,6 @@ def logging_start(on, alert, machine_id):
                 mould_id = result[0]
                 # print(mould_id)
 
-            sql_insert = " INSERT INTO mass_production (machine_code, mould_id) VALUES (%s, %s)"
-            cursor.execute(sql_insert, (str(machine_id), str(mould_id)))
-            last_inserted_id = cursor.lastrowid
 
             sql_select = """
                 SELECT main_id
@@ -656,6 +657,10 @@ def logging_start(on, alert, machine_id):
 
             if result:
                 main_id = result[0]
+                sql_insert = " INSERT INTO mass_production (machine_code, mould_id, main_id) VALUES (%s, %s, %s)"
+                cursor.execute(sql_insert, (str(machine_id), str(mould_id), str(main_id)))
+                last_inserted_id = cursor.lastrowid
+                
                 message = {
                         "command": "start",
                         "main_id": str(main_id),
