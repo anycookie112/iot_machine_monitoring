@@ -21,6 +21,7 @@ def calculate_filtered_variance(df, column_name, threshold=1.5):
 
     Returns:
         float: The variance of the filtered column.
+        
     """
     # Calculate Q1 (25th percentile) and Q3 (75th percentile)
     Q1 = df[column_name].quantile(0.10)
@@ -238,7 +239,7 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
         mould_index = cols.index('mould_id')
         cols.insert(mould_index + 1, 'total_stops')
         merged = merged[cols]
-    print("Returning from daily_report:", merged)
+    # print("Returning from daily_report:", merged)
 
     return merged, {"shift_1_totaldt": shift1_totaldt, "shift_2_totaldt": shift2_totaldt, "overall_totaldt": overall_totaldt}
 
@@ -339,7 +340,7 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
     with db_engine.connect() as connection:
         df = pd.read_sql(query, connection, params=params)
         # print("test")
-        print(df)
+        # print(df)
 
     # Check if the DataFrame is empty
     if df.empty:
@@ -365,7 +366,7 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
     df["time"] = df["time_input"].dt.time
     # print(f"3:{df}")
     dff = df.groupby(["action"]).time_taken.sum().reset_index()
-    print(dff)
+    # print(dff)
 
     # filtered_df = df
     filtered_df = df[(df["action"] == "abnormal_cycle") | (df["action"] == "downtime")].copy()
@@ -390,12 +391,12 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
 
     # Sort by time_input to ensure proper sequence
     filtered_df = filtered_df.sort_values(by="time_input").reset_index(drop=True)
-    print(filtered_df)
+    # print(filtered_df)
     filtered_df["total_minutes"] = filtered_df["time_taken"] / 60
     filtered_df["total_minutes"] = filtered_df["total_minutes"].round(2)
 
     total_downtime = filtered_df["time_taken"].sum() / 60
-    print(f"Total Downtime: {total_downtime.round(2)} minutes")
+    # print(f"Total Downtime: {total_downtime.round(2)} minutes")
 
 
     return filtered_df, {
@@ -723,14 +724,20 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
     total_machine_capacity = df['machine_capacity'].sum()
     actual_total_gain_hr = df['normal_cycle_time'].sum()
     ideal_running_machine_capacity = 100 * len(df)
-    ideal_overall_machine_capacity = 100 * 18
-
+    ideal_overall_machine_capacity = 24 * 18
+    act_avail_hr = df["total_time_taken"].sum()
+    # "TTL ACT GAIN HR / TTL ACT AVAIL HR"
     # Capacities and efficiency
-    actual_capacity_running = round((total_machine_capacity / ideal_running_machine_capacity) * 100, 2)
-    actual_machine_capacity_overall = round((actual_total_gain_hr / ideal_overall_machine_capacity) * 100, 2)
+    over_act_eff = round((actual_total_gain_hr / act_avail_hr) * 100, 2)
+
+    ovr_mc_capacity = round((actual_total_gain_hr / ideal_overall_machine_capacity) * 100, 2)
+    
     overall_eff = round((df['efficiency_percent'].sum() / len(df)), 2)
 
-    return df, actual_machine_capacity_overall, actual_capacity_running, overall_eff
+    df.loc['Total'] = round(df[['total_time_taken','normal_cycle_time','abnormal_cycle_time','downtime_time','shot_count']].sum(), 2)
+    df.fillna('')
+
+    return df, over_act_eff, ovr_mc_capacity, overall_eff
 
 
 # df_summary,_1,_2,_3 = efficiency_sql_only("2025-07-29")
@@ -770,3 +777,4 @@ def combined_output(date):
 
 # df, x, y = get_mould_activities("2025-07-02")
 # print(df, x,y)
+# print(efficiency_sql_only("2025-08-04"))

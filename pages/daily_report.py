@@ -22,7 +22,7 @@ import plotly.express as px
 
 
 
-dash.register_page(__name__, path="/daily")
+# dash.register_page(__name__, path="/daily")
 # app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 page = "daily"
@@ -152,14 +152,23 @@ grid_information_bar = dag.AgGrid(
 )
 
 refresh = dcc.Interval(
-    id="refresh-interval",
-    interval= 3600 * 1000,  # 5 seconds
+    id=f"refresh-interval-{page}",
+    interval= 3600 * 250,  # 15 minutes
+    # interval=15 * 1000,  # 5 seconds
+
     n_intervals=0,
 )
 
 refresh_button = dbc.Button(
-    "Refresh Data",
+    "Todays Data",
     id="refresh-button",
+    color="primary",
+    className="mb-3",
+)
+
+refresh_button2 = dbc.Button(
+    "Yesterdays Data",
+    id="refresh-button-2",
     color="primary",
     className="mb-3",
 )
@@ -239,6 +248,7 @@ def create_table(dataframe):
 
 
 layout = html.Div([
+    refresh,
     dcc.Tabs([
         
         dcc.Tab(label='Daily Machine Stop', children=[
@@ -260,6 +270,10 @@ layout = html.Div([
             ),
 
             html.Div(refresh_button, style={
+                "textAlign": "center", "marginBottom": "10px"
+            }),
+
+            html.Div(refresh_button2, style={
                 "textAlign": "center", "marginBottom": "10px"
             }),
 
@@ -513,6 +527,29 @@ def update_productivity_table(selected_date):
             html.P(f"{eff}%", className="card-text")
         ]
     )
+
+
+@callback(
+    Output("date-picker", 'date'),
+    Input("refresh-button", "n_clicks"),
+    Input("refresh-button-2", "n_clicks"),
+    Input(f"refresh-interval-{page}", 'n_intervals')
+)
+def update_date(btn1_clicks, btn2_clicks, interval_trigger):
+    ctx = dash.callback_context
+
+    if not ctx.triggered:
+        # Default: today’s date
+        return datetime.now().date()
+    
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    if triggered_id == "refresh-button-2":
+        return (datetime.now() - timedelta(days=1)).date()
+    else:
+        return datetime.now().date()
+
+
 # @callback(
 #     Output("textarea", "value"),
 #     Input("update-button", "n_clicks"),
@@ -525,4 +562,4 @@ def update_productivity_table(selected_date):
 
 # if __name__ == "__main__":
 #     app.run_server(port=8888, debug=True) 
-#     # app.run_server(port=8888)
+    # app.run_server(port=8888)
