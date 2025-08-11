@@ -533,9 +533,9 @@ def update_productivity_table(selected_date):
     Output("date-picker", 'date'),
     Input("refresh-button", "n_clicks"),
     Input("refresh-button-2", "n_clicks"),
-    Input(f"refresh-interval-{page}", 'n_intervals')
+    # Input(f"refresh-interval-{page}", 'n_intervals')
 )
-def update_date(btn1_clicks, btn2_clicks, interval_trigger):
+def update_date(btn1_clicks, btn2_clicks):
     ctx = dash.callback_context
 
     if not ctx.triggered:

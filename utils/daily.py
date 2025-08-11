@@ -593,17 +593,22 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
     query = text("""
     SELECT 
         machine_code, 
-        mould_code,
+        joblist.mould_code,
+        part_name,
         monitoring.action, 
         monitoring.main_id,
         monitoring.time_taken,
         monitoring.time_input, 
-        monitoring.remarks 
+        monitoring.remarks
+        
     FROM 
         machine_monitoring.monitoring
     INNER JOIN 
         machine_monitoring.joblist 
         ON monitoring.main_id = joblist.main_id
+    INNER JOIN
+        machine_monitoring.mould_list 
+        ON joblist.mould_code = mould_list.mould_code
     WHERE 
         monitoring.action IN ('adjustment start', 'adjustment end', 'change mould start', 'change mould end')
         AND monitoring.time_input BETWEEN :start_time AND :end_time;
@@ -623,31 +628,107 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
     # Normalize action
     df['base_action'] = df['action'].str.replace(r' (start|end)$', '', regex=True)
 
-    # Extract start and end rows
-    start_df = df[df['action'].str.endswith('start')][
-        ['main_id', 'base_action', 'time_input', 'machine_code', 'mould_code']
-    ].rename(columns={'time_input': 'start_time'})
+    # Group start times
+    start_df = (
+        df[df['action'].str.endswith('start')]
+        .groupby(['main_id', 'base_action', 'machine_code', 'mould_code'], as_index=False)
+        .agg(start_time=('time_input', 'min'))
+    )
 
-    end_df = df[df['action'].str.endswith('end')][
-        ['main_id', 'base_action', 'time_input', 'remarks']
-    ].rename(columns={'time_input': 'end_time'})
+    # Group end times and handle part_name/remarks
+    end_df = (
+        df[df['action'].str.endswith('end')]
+        .groupby(['main_id', 'base_action'], as_index=False)
+        .agg(
+            end_time=('time_input', 'max'),
+            remarks=('remarks', lambda x: ', '.join(sorted(set(filter(None, x))))),
+            part_name=('part_name', lambda x: ', '.join(sorted(set(filter(None, x)))))
+        )
+    )
 
-    # Merge on main_id + action
+    # Merge safely (one-to-one now)
     merged = pd.merge(start_df, end_df, on=['main_id', 'base_action'], how='inner')
 
     # Compute duration
     merged['duration'] = merged['end_time'] - merged['start_time']
     merged['duration_hr'] = (merged['duration'].dt.total_seconds() / 3600).round(2)
 
-    # Duration summaries
+    # Totals
     change_mould_total = merged[merged['base_action'] == 'change mould']['duration_hr'].sum()
     adjustment_total = merged[merged['base_action'] == 'adjustment']['duration_hr'].sum()
 
-    # Final output
-    return merged[['machine_code', 'mould_code', 'main_id', 'base_action', 'start_time', 'end_time', 'duration_hr', 'remarks']], change_mould_total, adjustment_total
+    return (
+        merged[['machine_code', 'mould_code', 'part_name', 'main_id', 'base_action', 'start_time', 'end_time', 'duration_hr', 'remarks']],
+        change_mould_total,
+        adjustment_total
+    )
 
 
 
+
+# def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
+#     if isinstance(date, str):
+#         date = datetime.strptime(date, "%Y-%m-%d")
+    
+#     start_time, _, end_time = date_calculation(date)
+
+#     query = text("""
+#     SELECT 
+#         machine_code, 
+#         joblist.mould_code,
+#         monitoring.action, 
+#         monitoring.main_id,
+#         monitoring.time_taken,
+#         monitoring.time_input, 
+#         monitoring.remarks
+        
+#     FROM 
+#         machine_monitoring.monitoring
+#     INNER JOIN 
+#         machine_monitoring.joblist 
+#         ON monitoring.main_id = joblist.main_id
+
+#     WHERE 
+#         monitoring.action IN ('adjustment start', 'adjustment end', 'change mould start', 'change mould end')
+#         AND monitoring.time_input BETWEEN :start_time AND :end_time;
+
+#     """)
+
+#     with db_connection_str.connect() as connection:
+
+#         df = pd.read_sql(query, connection, params={
+#             "start_time": start_time,
+#             "end_time": end_time
+#         })
+
+#     # Convert to datetime
+#     df['time_input'] = pd.to_datetime(df['time_input'])
+
+#     # Normalize action
+#     df['base_action'] = df['action'].str.replace(r' (start|end)$', '', regex=True)
+
+#     # Extract start and end rows
+#     start_df = df[df['action'].str.endswith('start')][
+#         ['main_id', 'base_action', 'time_input', 'machine_code', 'mould_code']
+#     ].rename(columns={'time_input': 'start_time'})
+
+#     end_df = df[df['action'].str.endswith('end')][
+#         ['main_id', 'base_action', 'time_input', 'remarks']
+#     ].rename(columns={'time_input': 'end_time'})
+
+#     # Merge on main_id + action
+#     merged = pd.merge(start_df, end_df, on=['main_id', 'base_action'], how='inner')
+
+#     # Compute duration
+#     merged['duration'] = merged['end_time'] - merged['start_time']
+#     merged['duration_hr'] = (merged['duration'].dt.total_seconds() / 3600).round(2)
+
+#     # Duration summaries
+#     change_mould_total = merged[merged['base_action'] == 'change mould']['duration_hr'].sum()
+#     adjustment_total = merged[merged['base_action'] == 'adjustment']['duration_hr'].sum()
+
+#     # Final output
+#     return merged[['machine_code', 'mould_code' ,'main_id', 'base_action', 'start_time', 'end_time', 'duration_hr', 'remarks']], change_mould_total, adjustment_total
 
 
 
@@ -658,16 +739,7 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
         date = datetime.strptime(date, "%Y-%m-%d")
     
     start_time, _, end_time = date_calculation(date)
-    query = text("""WITH change_mould_adjustment AS (
-        SELECT 
-                joblist.machine_code
-
-            FROM machine_monitoring.monitoring
-            INNER JOIN joblist ON monitoring.main_id = joblist.main_id
-            WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-            AND monitoring.action IN ('change mould', 'adjustment')
-            GROUP BY joblist.machine_code
-        )
+    query = text("""
 
         SELECT 
             mass_production.machine_code,
@@ -717,15 +789,15 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
     df['total_running_time'] = pd.to_timedelta(df['total_running_time'])
 
     # Compute machine capacity as % of 24 hours
-    df['machine_capacity'] = (df['total_running_time'].dt.total_seconds() / 86400 * 100).round(2)
-    df = df.drop(columns=['total_running_time'])  # Drop if not needed later
+    # df['machine_capacity'] = (df['normal_cycle_time'] / 24  * 100 ).round(2)
+    # df = df.drop(columns=['total_running_time'])  # Drop if not needed later
 
     # Summary calculations
-    total_machine_capacity = df['machine_capacity'].sum()
     actual_total_gain_hr = df['normal_cycle_time'].sum()
-    ideal_running_machine_capacity = 100 * len(df)
     ideal_overall_machine_capacity = 24 * 18
     act_avail_hr = df["total_time_taken"].sum()
+
+
     # "TTL ACT GAIN HR / TTL ACT AVAIL HR"
     # Capacities and efficiency
     over_act_eff = round((actual_total_gain_hr / act_avail_hr) * 100, 2)
@@ -770,11 +842,22 @@ def combined_output(date):
     df_merged[['total_change_mould_hr', 'total_adjustment_hr']] = df_merged[
         ['total_change_mould_hr', 'total_adjustment_hr']].fillna(0)
 
+    # Add adjustment & mould change time into total_time_taken
+    df_merged['total_time_taken'] = (
+        df_merged['total_time_taken']
+        + df_merged['total_adjustment_hr']
+        + df_merged['total_change_mould_hr']
+    )
+
+    df_merged['machine_capacity'] = (df_merged['normal_cycle_time'] / 24  * 100 ).round(2)
+
     return df_merged, actual_machine_capacity_overall, actual_capacity_running, overall_eff
+
 
 
 
 
 # df, x, y = get_mould_activities("2025-07-02")
 # print(df, x,y)
-# print(efficiency_sql_only("2025-08-04"))
+# print(combined_output("2025-08-07"))
+# print(mould_activities("2025-08-07"))

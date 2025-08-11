@@ -188,11 +188,12 @@ layout = html.Div([
             [
                 dbc.ModalHeader(dbc.ModalTitle("Header")),
                 dbc.ModalBody([
-                               "Confirm complete?"
+                               "Confirm complete change mould?"
                         ]),
                 dbc.ModalFooter([
                     dbc.Button("Yes", id="yes-1",  n_clicks=0),
                     dbc.Button("No", color="primary", id="no-1", className="ms-auto", n_clicks=0),
+                    dbc.Input(id="name-2", placeholder="Name Mould Setter", type="text"),
                 ]),
             ],
             id="confirmation-1",
@@ -204,12 +205,12 @@ layout = html.Div([
             [
                 dbc.ModalHeader(dbc.ModalTitle("Header")),
                 dbc.ModalBody([
-                               "Confirm complete?"
+                               "Confirm complete adjustment?"
                         ]),
                 dbc.ModalFooter([
                     dbc.Button("Yes", id="yes-2",  n_clicks=0),
                     dbc.Button("No", color="primary", id="no-2", className="ms-auto", n_clicks=0),
-                    dbc.Input(id="name", placeholder="Name", type="text"),
+                    dbc.Input(id="name", placeholder="Name Adjustment Setter", type="text"),
                 ]),
             ],
             id="confirmation-2",
@@ -377,33 +378,45 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
 
 @callback(
     Output("confirmation-1", "is_open"),
-    [Input("ume", "n_clicks"), Input("yes-1", "n_clicks"), Input("no-1", "n_clicks")],
-    [State("confirmation-1", "is_open"), State("machine_id", "value")]
+    [Input("ume", "n_clicks"),
+     Input("yes-1", "n_clicks"),
+     Input("no-1", "n_clicks"),
+     Input("name-2", "value")],
+    [State("confirmation-1", "is_open"),
+     State("machine_id", "value")]
 )
-def change_mould_end(ume, yes, no, is_open, machine_id):
-    mqtt_machine = f"machines/{machine_id}"
-    triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
-   
-    # When "ume" is clicked, open the modal
-    if triggered_id == "ume":
-        return True  # Open modal
+def change_mould_end(ume, yes, no, name, is_open, machine_id):
+    triggered = callback_context.triggered
 
-    # When "yes" is clicked, update the database and close the modal
+    # Handle first page load (no triggers)
+    if not triggered or triggered[0]["prop_id"] == ".":
+        return is_open if is_open is not None else False
+
+    triggered_id = triggered[0]["prop_id"].split(".")[0]
+    mqtt_machine = f"machines/{machine_id}" if machine_id else None
+
+    # Open modal when UME button clicked
+    if triggered_id == "ume":
+        return True
+
+    # Keep modal open if name is missing
+    if not name or not name.strip():
+        return True
+
+    # Yes button: update DB and close modal
     if triggered_id == "yes-1":
         try:
-            # elasped_time = toggle_machine_timer(machine_id)
-            # Connect to the database
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
-                # Update the machine status
+                # Update machine status
                 sql_update = """
                 UPDATE machine_list 
                 SET machine_status = 'active mould not running'
                 WHERE machine_code = %s
                 """
-                cursor.execute(sql_update, (machine_id,))  # Pass as a single-element tuple
-
-                # Fetch the most recent entry from joblist
+                cursor.execute(sql_update, (machine_id,))
+                
+                # Get most recent joblist entry
                 sql_select = """
                 SELECT main_id
                 FROM joblist
@@ -417,34 +430,28 @@ def change_mould_end(ume, yes, no, is_open, machine_id):
                 if result:
                     main_id = result[0]
                     sql_insert = """
-                    INSERT INTO monitoring (main_id, action, time_taken, time_input)
-                    VALUES (%s, "change mould end", %s, NOW())
+                    INSERT INTO monitoring (main_id, action, time_taken, time_input, remarks)
+                    VALUES (%s, "change mould end", %s, NOW(), %s)
                     """
-                    cursor.execute(sql_insert, (str(main_id), 0,))
+                    cursor.execute(sql_insert, (str(main_id), 0, name))
                     connection.commit()
-
                     
-                    message = json.dumps({"command": "ume"})
-                    publish_message(mqtt_machine, message, qos=2)  
+                    if mqtt_machine:
+                        message = json.dumps({"command": "ume"})
+                        publish_message(mqtt_machine, message, qos=2)
 
-                else:
-                    print(f"No matching entry found in joblist for machine_id {machine_id}")
-
-                connection.commit()  # Commit the transaction
-
-
+            connection.commit()
         except Exception as e:
             print(f"Error occurred: {e}")
         finally:
             connection.close()
+        return False
 
-        return False  # Close modal after action
-
-    # When "no" is clicked, just close the modal without any action
+    # No button: close modal
     if triggered_id == "no-1":
-        return False  # Close modal
+        return False
 
-    # Default: Return current modal state if no input is triggered
+    # Otherwise, keep current state
     return is_open
 
 
