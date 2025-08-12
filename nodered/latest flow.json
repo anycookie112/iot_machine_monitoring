@@ -1,0 +1,26 @@
+[
+    {
+        "id": "fa2e4e15793cf74c",
+        "type": "mysql",
+        "z": "f6f2187d.f17ca8",
+        "mydb": "f1d8e85811ac5a02",
+        "name": "Monitoring",
+        "x": 830,
+        "y": 380,
+        "wires": [
+            [
+                "0db50342e41d0ef6"
+            ]
+        ]
+    },
+    {
+        "id": "f1d8e85811ac5a02",
+        "type": "MySQLdatabase",
+        "name": "monitoring",
+        "host": "192.168.1.17",
+        "port": "3306",
+        "db": "machine_monitoring",
+        "tz": "",
+        "charset": "UTF8"
+    }
+]
