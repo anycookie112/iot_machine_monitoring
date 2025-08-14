@@ -51,68 +51,97 @@ def on_message(client, userdata, msg):
 
 
         if msg.topic.startswith("status/"):
-            # Handle status update
-            message_data = json.loads(payload)
-            status = message_data.get("status")
-            machine_id = message_data.get("machineid")
-            mqtt_machine = f"machines/{machine_id}"
+            try:
+                # Parse incoming MQTT payload
+                message_data = json.loads(payload)
+                status = message_data.get("status")
+                machine_id = message_data.get("machineid")
+                mqtt_machine = f"machines/{machine_id}"
 
-            if status and machine_id:
-                connection = create_engine(db_connection_str).raw_connection()
-                with connection.cursor() as cursor:
-                    if status == "disconnected":
-                        # Insert a row into monitoring table
+                if status and machine_id:
+                    connection = create_engine(db_connection_str).raw_connection()
+                    with connection.cursor() as cursor:
+                        # Always update esp_status
                         sql = "UPDATE machine_list SET esp_status = %s WHERE machine_code = %s"
                         cursor.execute(sql, (status, machine_id))
                         connection.commit()
 
-                        sql_logging = "INSERT INTO error_logs (machine_code, error_type, time_input) VALUES (%s, %s, NOW())"
-                        cursor.execute(sql_logging, (machine_id, "ESP Disconnected"))
-                        connection.commit()
-                    else:
-                        # Insert a row into monitoring table
-                        sql = "UPDATE machine_list SET esp_status = %s WHERE machine_code = %s"
-                        cursor.execute(sql, (status, machine_id))
-                        connection.commit()
-
-                    sql_status = "SELECT machine_status FROM machine_list WHERE machine_code = %s"
-                    cursor.execute(sql_status, (machine_id,))
-                    result_status = cursor.fetchone()
-
-                    if result_status:
-                        machine_status = result_status[0]
-                        if machine_status == "mass prod":
-                            sql_select = """
-                            SELECT main_id
-                            FROM joblist
-                            WHERE machine_code = %s
-                            ORDER BY main_id DESC
-                            LIMIT 1
+                        # If disconnected, log error
+                        if status == "disconnected":
+                            sql_logging = """
+                                INSERT INTO error_logs (machine_code, error_type, time_input)
+                                VALUES (%s, %s, NOW())
                             """
-                            cursor.execute(sql_select, (str(machine_id),))
-                            result_mainid = cursor.fetchone()
-                            main_id = result_mainid[0] if result_mainid else None
+                            cursor.execute(sql_logging, (machine_id, "ESP Disconnected"))
+                            connection.commit()
 
-                            sql_select = """
-                            SELECT mp_id
-                            FROM mass_production
+                        # Fetch current machine status from DB
+                        sql_status = """
+                            SELECT machine_status
+                            FROM machine_list
                             WHERE machine_code = %s
-                            ORDER BY mp_id DESC
-                            LIMIT 1
-                            """
-                            cursor.execute(sql_select, (str(machine_id),))
-                            result_mpid = cursor.fetchone()
-                            mp_id = result_mpid[0] if result_mpid else None
+                        """
+                        cursor.execute(sql_status, (machine_id,))
+                        result_status = cursor.fetchone()
 
-                            if main_id and mp_id:
-                                message = {
-                                    "command": "true",
-                                    "mp_id": str(mp_id),
-                                    "main_id": str(main_id)
-                                }
-                                client.publish(mqtt_machine, payload=json.dumps(message))
+                        if result_status:
+                            machine_status = result_status[0].strip().lower()
+
+                            command_message = None
+
+                            if machine_status == "mass prod":
+                                # Fetch latest main_id
+                                cursor.execute("""
+                                    SELECT main_id
+                                    FROM joblist
+                                    WHERE machine_code = %s
+                                    ORDER BY main_id DESC
+                                    LIMIT 1
+                                """, (machine_id,))
+                                result_mainid = cursor.fetchone()
+                                main_id = result_mainid[0] if result_mainid else None
+
+                                # Fetch latest mp_id
+                                cursor.execute("""
+                                    SELECT mp_id
+                                    FROM mass_production
+                                    WHERE machine_code = %s
+                                    ORDER BY mp_id DESC
+                                    LIMIT 1
+                                """, (machine_id,))
+                                result_mpid = cursor.fetchone()
+                                mp_id = result_mpid[0] if result_mpid else None
+
+                                if main_id and mp_id:
+                                    command_message = {
+                                        "command": "true",
+                                        "mp_id": str(mp_id),
+                                        "main_id": str(main_id)
+                                    }
+                                    print(f"[DEBUG] {machine_id} mass prod → Sending TRUE with mp_id={mp_id}, main_id={main_id}")
+                                else:
+                                    print(f"[DEBUG] {machine_id} mass prod → Missing mp_id/main_id, not sending")
+
+                            elif machine_status in ("change mould in progress", "adjustment/qa in progress"):
+                                command_message = {"command": "qas"}
+                                print(f"[DEBUG] {machine_id} change mould/QA → Sending QAS")
+
+                            elif machine_status == "active mould not running":
+                                command_message = {"command": "qae"}
+                                print(f"[DEBUG] {machine_id} mould not running → Sending QAE")
+
+                            else:
+                                print(f"[DEBUG] {machine_id} has unhandled status '{machine_status}' → No command sent")
+
+                            # Publish the decided command
+                            if command_message:
+                                client.publish(mqtt_machine, payload=json.dumps(command_message))
 
                     print(f"Updated status for {machine_id} to {status}")
+
+            except Exception as e:
+                print(f"[ERROR] Exception in status handler: {e}")
+
 
         elif msg.topic.startswith("action/"):
             if msg.topic == "action/job_end":
@@ -205,13 +234,6 @@ def on_message(client, userdata, msg):
                             
                             if mould_id is not None:
                                 # print(mould_id)
-                                
-                                sql_insert = text("""
-                                    INSERT INTO mass_production (machine_code, mould_id) 
-                                    VALUES (:machine_code, :mould_id)
-                                """)
-                                cursor = connection.execute(sql_insert, {"machine_code": machine_id, "mould_id": mould_id})
-                                last_inserted_id = cursor.lastrowid  # Get last inserted ID
 
                                 sql_select = text("""
                                     SELECT main_id FROM joblist
@@ -222,6 +244,24 @@ def on_message(client, userdata, msg):
                                 result = connection.execute(sql_select, {"machine_code": machine_id}).fetchone()
 
                                 main_id = result[0] if result else None  # Handle None case
+
+                                
+                                sql_insert = text("""
+                                    INSERT INTO mass_production (machine_code, mould_id, main_id) 
+                                    VALUES (:machine_code, :mould_id)
+                                """)
+                                cursor = connection.execute(sql_insert, {"machine_code": machine_id, "mould_id": mould_id, "main_id": main_id})
+                                last_inserted_id = cursor.lastrowid  # Get last inserted ID
+
+                                # sql_select = text("""
+                                #     SELECT main_id FROM joblist
+                                #     WHERE machine_code = :machine_code
+                                #     ORDER BY main_id DESC
+                                #     LIMIT 1
+                                # """)
+                                # result = connection.execute(sql_select, {"machine_code": machine_id}).fetchone()
+
+                                # main_id = result[0] if result else None  # Handle None case
 
                                 if main_id is not None:
                                     message = {
