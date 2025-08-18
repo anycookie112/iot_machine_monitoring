@@ -665,74 +665,6 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
 
 
 
-
-# def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
-#     if isinstance(date, str):
-#         date = datetime.strptime(date, "%Y-%m-%d")
-    
-#     start_time, _, end_time = date_calculation(date)
-
-#     query = text("""
-#     SELECT 
-#         machine_code, 
-#         joblist.mould_code,
-#         monitoring.action, 
-#         monitoring.main_id,
-#         monitoring.time_taken,
-#         monitoring.time_input, 
-#         monitoring.remarks
-        
-#     FROM 
-#         machine_monitoring.monitoring
-#     INNER JOIN 
-#         machine_monitoring.joblist 
-#         ON monitoring.main_id = joblist.main_id
-
-#     WHERE 
-#         monitoring.action IN ('adjustment start', 'adjustment end', 'change mould start', 'change mould end')
-#         AND monitoring.time_input BETWEEN :start_time AND :end_time;
-
-#     """)
-
-#     with db_connection_str.connect() as connection:
-
-#         df = pd.read_sql(query, connection, params={
-#             "start_time": start_time,
-#             "end_time": end_time
-#         })
-
-#     # Convert to datetime
-#     df['time_input'] = pd.to_datetime(df['time_input'])
-
-#     # Normalize action
-#     df['base_action'] = df['action'].str.replace(r' (start|end)$', '', regex=True)
-
-#     # Extract start and end rows
-#     start_df = df[df['action'].str.endswith('start')][
-#         ['main_id', 'base_action', 'time_input', 'machine_code', 'mould_code']
-#     ].rename(columns={'time_input': 'start_time'})
-
-#     end_df = df[df['action'].str.endswith('end')][
-#         ['main_id', 'base_action', 'time_input', 'remarks']
-#     ].rename(columns={'time_input': 'end_time'})
-
-#     # Merge on main_id + action
-#     merged = pd.merge(start_df, end_df, on=['main_id', 'base_action'], how='inner')
-
-#     # Compute duration
-#     merged['duration'] = merged['end_time'] - merged['start_time']
-#     merged['duration_hr'] = (merged['duration'].dt.total_seconds() / 3600).round(2)
-
-#     # Duration summaries
-#     change_mould_total = merged[merged['base_action'] == 'change mould']['duration_hr'].sum()
-#     adjustment_total = merged[merged['base_action'] == 'adjustment']['duration_hr'].sum()
-
-#     # Final output
-#     return merged[['machine_code', 'mould_code' ,'main_id', 'base_action', 'start_time', 'end_time', 'duration_hr', 'remarks']], change_mould_total, adjustment_total
-
-
-
-
 def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
     
     if isinstance(date, str):
@@ -790,33 +722,32 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
 
     # Compute machine capacity as % of 24 hours
     # df['machine_capacity'] = (df['normal_cycle_time'] / 24  * 100 ).round(2)
-    # df = df.drop(columns=['total_running_time'])  # Drop if not needed later
+    df = df.drop(columns=['total_running_time'])  # Drop if not needed later
 
     # Summary calculations
     actual_total_gain_hr = df['normal_cycle_time'].sum()
     ideal_overall_machine_capacity = 24 * 18
     act_avail_hr = df["total_time_taken"].sum()
 
+    actual_running_machines = len(df) * 24
+    # print(f"Actual Running Machines: {actual_running_machines}")
 
     # "TTL ACT GAIN HR / TTL ACT AVAIL HR"
     # Capacities and efficiency
     over_act_eff = round((actual_total_gain_hr / act_avail_hr) * 100, 2)
 
     ovr_mc_capacity = round((actual_total_gain_hr / ideal_overall_machine_capacity) * 100, 2)
+
+    actual_mc_capacity = round((actual_total_gain_hr / actual_running_machines  ) * 100, 2) 
     
     overall_eff = round((df['efficiency_percent'].sum() / len(df)), 2)
 
-    df.loc['Total'] = round(df[['total_time_taken','normal_cycle_time','abnormal_cycle_time','downtime_time','shot_count']].sum(), 2)
-    df.fillna('')
 
-    return df, over_act_eff, ovr_mc_capacity, overall_eff
+    return df, over_act_eff, ovr_mc_capacity, overall_eff, actual_mc_capacity
 
-
-# df_summary,_1,_2,_3 = efficiency_sql_only("2025-07-29")
-# print(df_summary)
 
 def combined_output(date):
-    df_summary, actual_machine_capacity_overall, actual_capacity_running, overall_eff = efficiency_sql_only(date)
+    df_summary, actual_machine_capacity_overall, actual_capacity_running, overall_eff, actual_mc_capacity = efficiency_sql_only(date)
     df_actions, x, y = mould_activities(date)
 
     pivot_actions = df_actions.pivot_table(
@@ -849,9 +780,51 @@ def combined_output(date):
         + df_merged['total_change_mould_hr']
     )
 
+
     df_merged['machine_capacity'] = (df_merged['normal_cycle_time'] / 24  * 100 ).round(2)
 
-    return df_merged, actual_machine_capacity_overall, actual_capacity_running, overall_eff
+    # Create totals for all numeric columns you care about
+    numeric_cols = [
+        'total_time_taken',
+        'normal_cycle_time',
+        'abnormal_cycle_time',
+        'downtime_time',
+        'total_adjustment_hr',
+        'total_change_mould_hr',
+    ]
+
+    df_merged.loc['Total', numeric_cols] = df_merged[numeric_cols].sum().round(2)
+
+    # Clear non-summed columns
+    for col in df_merged.columns:
+        if col not in numeric_cols:
+            df_merged.loc['Total', col] = ''
+    
+    cols_to_clear = ['first_input_time', 'last_input_time']
+
+    for col in cols_to_clear:
+        df_merged[col] = df_merged[col].astype("object")   # allow mixed types
+        df_merged.loc['Total', col] = ''
+
+
+    desired_order = [
+    'machine_code',
+    'total_time_taken',
+    'normal_cycle_time',
+    'abnormal_cycle_time',
+    'downtime_time',
+    'total_adjustment_hr',
+    'total_change_mould_hr',
+    'shot_count',
+    'first_input_time',
+    'last_input_time',
+    'efficiency_percent',
+    'machine_capacity'
+]
+
+    df_merged = df_merged.reindex(columns=desired_order)  
+
+    return df_merged, actual_machine_capacity_overall, actual_capacity_running, overall_eff, actual_mc_capacity
 
 
 
@@ -859,5 +832,6 @@ def combined_output(date):
 
 # df, x, y = get_mould_activities("2025-07-02")
 # print(df, x,y)
-# print(combined_output("2025-08-07"))
+# print(combined_output("2025-08-14"))
 # print(mould_activities("2025-08-07"))
+# print(efficiency_sql_only("2025-08-14"))

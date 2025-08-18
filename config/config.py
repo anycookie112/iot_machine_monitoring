@@ -2,11 +2,11 @@
 #     "username": "root",
 #     "password": "UL1131",
 #     "host": "localhost",
-#     "database": "machine_monitoring"
+#     "database": "monitoring_2025"
 # }
 
 # MQTT_CONFIG = {
-#     "mqtt_broker": "192.168.1.15",
+#     "mqtt_broker": "192.168.56.1",
 #     "mqtt_port": 1883
 # }
 

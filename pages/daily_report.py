@@ -9,8 +9,7 @@ import datetime
 from datetime import datetime, timedelta, date
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from utils.daily import combined_output
-from utils.daily import daily_report, hourly, calculate_downtime_daily_report, mould_activities
+from utils.daily import daily_report, hourly, calculate_downtime_daily_report, mould_activities, combined_output
 from utils.efficiency import  calculate_downtime_df_daily_report
 from config.config import DB_CONFIG
 import plotly.graph_objects as go
@@ -23,7 +22,7 @@ import plotly.express as px
 
 
 # dash.register_page(__name__, path="/daily")
-# app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 page = "daily"
 
@@ -173,7 +172,8 @@ refresh_button2 = dbc.Button(
     className="mb-3",
 )
 
-df, overall, running, eff = combined_output("2025-07-29")
+df, overall, running, eff, act_cap = combined_output("2025-07-29")
+print(f"Overall: {overall}, Running: {running}, Efficiency: {eff}, Actual Capacity: {act_cap}")
 
 # fallback if df is empty
 if df is None or df.empty:
@@ -206,8 +206,8 @@ def create_table(dataframe):
         "last_input_time": "End Time",
         # "total_running_time": "Running Time",
         "efficiency_percent": "Efficiency (%)",
-        "total_change_mould_hr": "Change Moulds",
-        "total_adjustment_hr": "Adjustments",
+        "total_change_mould_hr": "Change Mould (Hr)",
+        "total_adjustment_hr": "Adjustment (Hr)",
         "machine_capacity": "Actual Gain Hr / 24 (%)"
     }
 
@@ -229,17 +229,27 @@ def create_table(dataframe):
         row = []
         for col in formatted_df.columns:
             cell_value = formatted_df.iloc[i][col]
-
             style = {}
+
             # Highlight efficiency < 90%
-            if col == "Efficiency (%)" and float(cell_value) < 90:
-                style = {"backgroundColor": "#ffcccc", "fontWeight": "bold"}  # light red
+            if col == "Efficiency (%)":
+                try:
+                    if cell_value not in ("", None) and float(cell_value) < 90:
+                        style = {"backgroundColor": "#ffcccc", "fontWeight": "bold"}  # light red
+                except ValueError:
+                    pass  # skip if not convertible to float
+
             # Highlight machine capacity == 100%
-            elif col == "Machine Capacity (%)" and float(cell_value) == 100:
-                style = {"backgroundColor": "#ccffcc", "fontWeight": "bold"}  # light green
+            elif col == "Actual Gain Hr / 24 (%)":
+                try:
+                    if cell_value not in ("", None) and float(cell_value) == 100:
+                        style = {"backgroundColor": "#ccffcc", "fontWeight": "bold"}  # light green
+                except ValueError:
+                    pass
 
             row.append(html.Td(cell_value, style=style))
         body.append(html.Tr(row))
+
 
     return html.Table([header, html.Tbody(body)], className="table table-bordered")
 
@@ -247,7 +257,7 @@ def create_table(dataframe):
 
 
 
-layout = html.Div([
+app.layout = html.Div([
     refresh,
     dcc.Tabs([
         
@@ -347,9 +357,10 @@ layout = html.Div([
 
                 html.Div(
                     [
-                        card("Overall Productivity", "TTL ACT GAIN HR / TTL ACT AVAIL HR", 0, id="overall-card"),
-                        card("Machine Productivity","TTL ACT GAIN HR / 24 X 18 ", 0, id="machine-card"),
-                        card("Overall Efficiency","AVG EFF ALL MC", 0, id="eff-card")
+                        card("Overall Efficiency", "TTL ACT GAIN HR / TTL ACT AVAIL HR", 0, id="overall-card"),
+                        card("Overall Plant Productivity","TTL ACT GAIN HR / 24 X 18 ", 0, id="machine-card"),
+                        card("Actual Plant Productivity","TTL ACT GAIN HR / (24 X RUNNING MC) ", 0, id="act-plant-card"),
+                        # card("Overall Efficiency","AVG EFF ALL MC", 0, id="eff-card")
                     ],
                     className="d-flex justify-content-around mb-4"
                 ),
@@ -369,6 +380,7 @@ layout = html.Div([
                         columnDefs=[
                             {"headerName": "Machine", "field": "machine_code"},
                             {"headerName": "Mould", "field": "mould_code"},
+                            {"headerName": "Part Name", "field": "part_name"},
                             {"headerName": "Action", "field": "base_action"},
                             {"headerName": "Duration (hr)", "field": "duration_hr"},
                             {"headerName": "Start", "field": "start_time"},
@@ -484,7 +496,6 @@ def update_shift_data(date):
             f"Total Adjustment Time: {adjust_hrs:.0f} hrs {adjust_mins:.0f} mins"
 )
         # ma_info =f"Total Change Mould Time: {total_change_mould} Hours | Total Adjustment Time: {total_adjustment} Hours",
-
         return df_report.to_dict("records"), daily_report_graph, dt_info, date, mould_info.to_dict("records"), ma_info  # Update the grid with new data
     return []
     
@@ -493,14 +504,14 @@ def update_shift_data(date):
     Output("productivity-table", "children"),
     Output("overall-card", "children"),
     Output("machine-card", "children"),
-    Output("eff-card", "children"),
+    Output("act-plant-card", "children"),
     Input("date-picker", "date"),
 )
 def update_productivity_table(selected_date):
     if not selected_date:
         return html.P("Please select a date."), "", ""
 
-    df, overall, running, eff = combined_output(selected_date)
+    df, overall, running, eff, act_cap = combined_output(selected_date)
 
     if df is None or df.empty:
         df = pd.DataFrame(columns=[
@@ -523,8 +534,8 @@ def update_productivity_table(selected_date):
             html.P(f"{running}%", className="card-text")
         ],
         [
-            # html.H4("Machine Productivity"),
-            html.P(f"{eff}%", className="card-text")
+            # html.H4("Act Machine Productivity"),
+            html.P(f"{act_cap}%", className="card-text")
         ]
     )
 
@@ -533,7 +544,6 @@ def update_productivity_table(selected_date):
     Output("date-picker", 'date'),
     Input("refresh-button", "n_clicks"),
     Input("refresh-button-2", "n_clicks"),
-    # Input(f"refresh-interval-{page}", 'n_intervals')
 )
 def update_date(btn1_clicks, btn2_clicks):
     ctx = dash.callback_context
@@ -560,6 +570,6 @@ def update_date(btn1_clicks, btn2_clicks):
 #     return llm_report(date)
 
 
-# if __name__ == "__main__":
-#     app.run_server(port=8888, debug=True) 
+if __name__ == "__main__":
+    app.run_server(port=8888, debug=True) 
     # app.run_server(port=8888)
