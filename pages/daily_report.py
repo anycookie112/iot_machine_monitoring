@@ -357,7 +357,7 @@ app.layout = html.Div([
 
                 html.Div(
                     [
-                        card("Overall Efficiency", "TTL ACT GAIN HR / TTL ACT AVAIL HR", 0, id="overall-card"),
+                        card("Actual Productivity", "TTL ACT GAIN HR / TTL ACT AVAIL HR", 0, id="overall-card"),
                         card("Overall Plant Productivity","TTL ACT GAIN HR / 24 X 18 ", 0, id="machine-card"),
                         card("Actual Plant Productivity","TTL ACT GAIN HR / (24 X RUNNING MC) ", 0, id="act-plant-card"),
                         # card("Overall Efficiency","AVG EFF ALL MC", 0, id="eff-card")
