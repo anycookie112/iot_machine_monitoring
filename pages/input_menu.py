@@ -588,7 +588,7 @@ def adjustment_end(ume, yes, no, name, is_open, machine_id):
                     cursor.execute(sql_insert, (str(main_id), 0, name,))
                     connection.commit()
 
-                    message = json.dumps({"command": "qas"})
+                    message = json.dumps({"command": "qae"})
                     publish_message(mqtt_machine, message, qos=2)  
 
 

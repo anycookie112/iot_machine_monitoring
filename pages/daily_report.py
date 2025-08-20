@@ -21,8 +21,8 @@ import plotly.express as px
 
 
 
-# dash.register_page(__name__, path="/daily")
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+dash.register_page(__name__, path="/daily")
+# app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 page = "daily"
 
@@ -206,8 +206,8 @@ def create_table(dataframe):
         "last_input_time": "End Time",
         # "total_running_time": "Running Time",
         "efficiency_percent": "Efficiency (%)",
-        "total_change_mould_hr": "Change Mould (Hr)",
-        "total_adjustment_hr": "Adjustment (Hr)",
+        "total_change_mould_hr": "Change Mould (Hrs)",
+        "total_adjustment_hr": "Adjustment (Hrs)",
         "machine_capacity": "Actual Gain Hr / 24 (%)"
     }
 
@@ -257,7 +257,7 @@ def create_table(dataframe):
 
 
 
-app.layout = html.Div([
+layout = html.Div([
     refresh,
     dcc.Tabs([
         
@@ -359,7 +359,7 @@ app.layout = html.Div([
                     [
                         card("Actual Productivity", "TTL ACT GAIN HR / TTL ACT AVAIL HR", 0, id="overall-card"),
                         card("Overall Plant Productivity","TTL ACT GAIN HR / 24 X 18 ", 0, id="machine-card"),
-                        card("Actual Plant Productivity","TTL ACT GAIN HR / (24 X RUNNING MC) ", 0, id="act-plant-card"),
+                        card("Planned Productivity","TTL ACT GAIN HR / (24 X RUNNING MC) ", 0, id="act-plant-card"),
                         # card("Overall Efficiency","AVG EFF ALL MC", 0, id="eff-card")
                     ],
                     className="d-flex justify-content-around mb-4"
@@ -570,6 +570,6 @@ def update_date(btn1_clicks, btn2_clicks):
 #     return llm_report(date)
 
 
-if __name__ == "__main__":
-    app.run_server(port=8888, debug=True) 
-    # app.run_server(port=8888)
+# if __name__ == "__main__":
+#     app.run_server(port=8888, debug=True) 
+#     # app.run_server(port=8888)

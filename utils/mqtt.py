@@ -217,6 +217,19 @@ def on_message(client, userdata, msg):
                 try:
                     with db_connection.connect() as connection:
                         with connection.begin():  # Ensures transaction handling
+                            
+                            sql_query = text("""
+                                SELECT mould_id, machine_status 
+                                FROM machine_list 
+                                WHERE machine_code = :machine_code
+                            """)
+                            result = connection.execute(sql_query, {"machine_code": machine_id}).fetchone()
+
+                            # Unpack safely with defaults
+                            mould_id, machine_status = result if result else (None, None)
+                            print({"mould_id": mould_id, "machine_status": machine_status})
+
+
                             sql = text("""
                                 UPDATE machine_list 
                                 SET machine_status = 'mass prod'
@@ -224,52 +237,62 @@ def on_message(client, userdata, msg):
                             """)
                             connection.execute(sql, {"machine_code": machine_id})  # Safe parameter passing
 
-                            sql_query = text("""
-                                SELECT mould_id FROM machine_list 
-                                WHERE machine_code = :machine_code
-                            """)
-                            result = connection.execute(sql_query, {"machine_code": machine_id}).fetchone()
-                            
-                            mould_id = result[0] if result else None  # Handle None case
-                            
-                            if mould_id is not None:
-                                # print(mould_id)
 
-                                sql_select = text("""
-                                    SELECT main_id FROM joblist
-                                    WHERE machine_code = :machine_code
-                                    ORDER BY main_id DESC
-                                    LIMIT 1
-                                """)
-                                result = connection.execute(sql_select, {"machine_code": machine_id}).fetchone()
 
-                                main_id = result[0] if result else None  # Handle None case
+                            if machine_status == "mass prod":
+                                if mould_id is not None:
+                                    # print(mould_id)
 
-                                
-                                sql_insert = text("""
-                                    INSERT INTO mass_production (machine_code, mould_id, main_id) 
-                                    VALUES (:machine_code, :mould_id)
-                                """)
-                                cursor = connection.execute(sql_insert, {"machine_code": machine_id, "mould_id": mould_id, "main_id": main_id})
-                                last_inserted_id = cursor.lastrowid  # Get last inserted ID
+                                    sql_select = text("""
+                                        SELECT main_id, mp_id FROM mass_production
+                                        WHERE machine_code = :machine_code
+                                        ORDER BY mp_id DESC
+                                        LIMIT 1
+                                    """)
+                                    result = connection.execute(sql_select, {"machine_code": machine_id}).fetchone()
 
-                                # sql_select = text("""
-                                #     SELECT main_id FROM joblist
-                                #     WHERE machine_code = :machine_code
-                                #     ORDER BY main_id DESC
-                                #     LIMIT 1
-                                # """)
-                                # result = connection.execute(sql_select, {"machine_code": machine_id}).fetchone()
+                                    main_id, mp_id = result if result else (None, None)
 
-                                # main_id = result[0] if result else None  # Handle None case
+                                    if main_id is not None:
+                                        message = {
+                                            "command": "start",
+                                            "main_id": str(main_id),
+                                            "mp_id": str(mp_id)
+                                        }
+                                        mqttc.publish(mqtt_machine, payload=json.dumps(message))  # Ensure mqttc is correctly initialized
+                            if machine_status == "active mould not running":
+                                if mould_id is not None:
+                                    # print(mould_id)
 
-                                if main_id is not None:
-                                    message = {
-                                        "command": "start",
-                                        "main_id": str(main_id),
-                                        "mp_id": last_inserted_id
-                                    }
-                                    mqttc.publish(mqtt_machine, payload=json.dumps(message))  # Ensure mqttc is correctly initialized
+                                    sql_select = text("""
+                                        SELECT main_id FROM joblist
+                                        WHERE machine_code = :machine_code
+                                        ORDER BY main_id DESC
+                                        LIMIT 1
+                                    """)
+                                    result = connection.execute(sql_select, {"machine_code": machine_id}).fetchone()
+
+                                    main_id = result[0] if result else None  # Handle None case
+
+                                    
+                                    sql_insert = text("""
+                                        INSERT INTO mass_production (machine_code, mould_id, main_id) 
+                                        VALUES (:machine_code, :mould_id, :main_id)
+                                    """)
+                                    cursor = connection.execute(sql_insert, {"machine_code": machine_id, "mould_id": mould_id, "main_id": main_id})
+                                    last_inserted_id = cursor.lastrowid  # Get last inserted ID
+
+                                    if main_id is not None:
+                                        message = {
+                                            "command": "start",
+                                            "main_id": str(main_id),
+                                            "mp_id": last_inserted_id
+                                        }
+                                        mqttc.publish(mqtt_machine, payload=json.dumps(message))  # Ensure mqttc is correctly initialized
+
+
+
+
 
                 except Exception as e:
                     print(f"Error updating database: {e}")

@@ -94,10 +94,10 @@ def calculate_filtered_variance_by_group(df, group_col, target_col, threshold=1.
 
         results.append({
             group_col: group_val,
-            f"max_cycle_time": Q1,
-            "median_cycle_time": median,
-            f"min_cycle_time": Q3,
-            f"variance": variance
+            "max_cycle_time": round(Q1, 2),
+            "median_cycle_time": round(median, 2),
+            "min_cycle_time": round(Q3, 2),
+            "variance": round(variance, 2)
         })
 
     return pd.DataFrame(results)
@@ -715,7 +715,7 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
 
 
     if df.empty:
-        return df, 0.0, 0.0, 0.0
+        return df, 0.0, 0.0, 0.0, 0.0
 
     # Convert to timedelta
     df['total_running_time'] = pd.to_timedelta(df['total_running_time'])
@@ -742,8 +742,10 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
     
     overall_eff = round((df['efficiency_percent'].sum() / len(df)), 2)
 
-
-    return df, over_act_eff, ovr_mc_capacity, overall_eff, actual_mc_capacity
+    if df.empty:
+        return df, 0, 0, 0, 0
+    else:
+        return df, over_act_eff, ovr_mc_capacity, overall_eff, actual_mc_capacity
 
 
 def combined_output(date):
@@ -793,39 +795,41 @@ def combined_output(date):
         'total_change_mould_hr',
     ]
 
+        # Totals for numeric columns
     df_merged.loc['Total', numeric_cols] = df_merged[numeric_cols].sum().round(2)
 
-    # Clear non-summed columns
-    for col in df_merged.columns:
-        if col not in numeric_cols:
-            df_merged.loc['Total', col] = ''
-    
-    cols_to_clear = ['first_input_time', 'last_input_time']
+    # Aggregate metrics instead of blanking
+    df_merged.loc['Total', 'efficiency_percent'] = round(df_merged['efficiency_percent'].mean(), 2) if not df_merged['efficiency_percent'].empty else 0.0
 
-    for col in cols_to_clear:
-        df_merged[col] = df_merged[col].astype("object")   # allow mixed types
+
+    
+    df_merged.loc['Total', 'machine_capacity'] = round(df_merged['machine_capacity'].mean(), 2) if not df_merged['machine_capacity'].empty else 0.0
+    df_merged.loc['Total', 'shot_count'] = round(df_merged['shot_count'].mean(), 2) if not df_merged['shot_count'].empty else 0.0
+
+    # Clear non-summed columns
+    for col in ['machine_code', 'first_input_time', 'last_input_time']:
+        df_merged[col] = df_merged[col].astype("object")
         df_merged.loc['Total', col] = ''
 
-
+    # Reorder columns
     desired_order = [
-    'machine_code',
-    'total_time_taken',
-    'normal_cycle_time',
-    'abnormal_cycle_time',
-    'downtime_time',
-    'total_adjustment_hr',
-    'total_change_mould_hr',
-    'shot_count',
-    'first_input_time',
-    'last_input_time',
-    'efficiency_percent',
-    'machine_capacity'
-]
-
-    df_merged = df_merged.reindex(columns=desired_order)  
-
+        'machine_code',
+        'total_time_taken',
+        'normal_cycle_time',
+        'abnormal_cycle_time',
+        'downtime_time',
+        'total_adjustment_hr',
+        'total_change_mould_hr',
+        'shot_count',
+        'first_input_time',
+        'last_input_time',
+        'efficiency_percent',
+        'machine_capacity'
+    ]
+    df_merged = df_merged.reindex(columns=desired_order)
+    
     return df_merged, actual_machine_capacity_overall, actual_capacity_running, overall_eff, actual_mc_capacity
-
+    
 
 
 
@@ -834,4 +838,5 @@ def combined_output(date):
 # print(df, x,y)
 # print(combined_output("2025-08-14"))
 # print(mould_activities("2025-08-07"))
-# print(efficiency_sql_only("2025-08-14"))
+# print(efficiency_sql_only("2025-08-19"))
+print(daily_report())
