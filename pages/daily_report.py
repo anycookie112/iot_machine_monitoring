@@ -101,6 +101,28 @@ grid_daily = dag.AgGrid(
     id="grid_daily",
     rowData=df_report.to_dict("records"),
     dashGridOptions={'rowSelection': 'single', 'defaultSelected': [0]},
+    # dashGridOptions={
+    #     "rowSelection": "single",
+    #     "getRowStyle": {
+    #         "styleConditions": [
+    #             {
+    #                 "condition": "params.data.median_cycle_time > (params.data.standard_ct * 1.03)",
+    #                 "style": {"backgroundColor": "sandybrown"},
+    #             },
+
+    #             {
+    #                 "condition": "params.data.standard_ct > (params.data.median_cycle_time * 1.06)",
+    #                 "style": {"backgroundColor": "green"},
+    #             },
+    #             # {
+    #             #     "condition": "params.data.shift_1_downtime_minutes > 120 || params.data.shift_2_downtime_minutes > 120",
+    #             #     "style": {"backgroundColor": "lightcoral"},
+    #             # },
+    #         ],
+    #         "defaultStyle": {"backgroundColor": "white", "color": "black"},
+    #     },
+    # },
+    
     columnDefs=[
         
         {"field": "machine_code", "headerName": "MC", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 80},
@@ -109,13 +131,21 @@ grid_daily = dag.AgGrid(
         {"field": "shift_1_downtime_minutes", "headerName": "S-1 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True,"width": 150},
         {"field": "shift_2_stops", "headerName": "S-2 Stops", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
         {"field": "shift_2_downtime_minutes", "headerName": "S-2 Downtime (min)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 150},
-        {"field": "min_cycle_time", "headerName": "Max CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "standard_ct", "headerName": "Standard CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
         {"field": "median_cycle_time", "headerName": "Median CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+
+        {"field": "min_cycle_time", "headerName": "Max CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
         {"field": "max_cycle_time", "headerName": "Min CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
         {"field": "variance", "headerName": "CT Variance", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
         {"field": "mp_id", "headerName": "MP ID", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 80},
-    ]
-    ,
+    ],
+    rowClassRules = {
+    "text-success fw-bold fs-4": "params.data.standard_ct > (params.data.median_cycle_time * 1.06)",
+    "text-warning fw-bold fs-4": "params.data.median_cycle_time > (params.data.standard_ct * 1.03)",
+    },
+    rowStyle={"fontSize": "25px", "bold": True},
+  
+    
     columnSize="autoSize",
 )
 
@@ -205,10 +235,10 @@ def create_table(dataframe):
         "first_input_time": "Start Time",
         "last_input_time": "End Time",
         # "total_running_time": "Running Time",
-        "efficiency_percent": "Efficiency (%)",
+        "efficiency": "Efficiency (%)",
         "total_change_mould_hr": "Change Mould (Hrs)",
         "total_adjustment_hr": "Adjustment (Hrs)",
-        "machine_capacity": "Actual Gain Hr / 24 (%)"
+        # "machine_capacity": "Actual Gain Hr / 24 (%)"
     }
 
     formatted_df = dataframe.copy()
@@ -358,7 +388,7 @@ layout = html.Div([
                 html.Div(
                     [
                         card("Actual Productivity", "TTL ACT GAIN HR / TTL ACT AVAIL HR", 0, id="overall-card"),
-                        card("Overall Plant Productivity","TTL ACT GAIN HR / 24 X 18 ", 0, id="machine-card"),
+                        # card("Overall Plant Productivity","TTL ACT GAIN HR / 24 X 18 ", 0, id="machine-card"),
                         card("Planned Productivity","TTL ACT GAIN HR / (24 X RUNNING MC) ", 0, id="act-plant-card"),
                         # card("Overall Efficiency","AVG EFF ALL MC", 0, id="eff-card")
                     ],
@@ -503,7 +533,7 @@ def update_shift_data(date):
 @callback(
     Output("productivity-table", "children"),
     Output("overall-card", "children"),
-    Output("machine-card", "children"),
+    # Output("machine-card", "children"),
     Output("act-plant-card", "children"),
     Input("date-picker", "date"),
 )
@@ -529,10 +559,10 @@ def update_productivity_table(selected_date):
             # html.H4("Overall Productivity"),
             html.P(f"{overall}%", className="card-text")
         ],
-        [
-            # html.H4("Machine Productivity"),
-            html.P(f"{running}%", className="card-text")
-        ],
+        # [
+        #     # html.H4("Machine Productivity"),
+        #     html.P(f"{running}%", className="card-text")
+        # ],
         [
             # html.H4("Act Machine Productivity"),
             html.P(f"{act_cap}%", className="card-text")

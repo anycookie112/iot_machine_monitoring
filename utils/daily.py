@@ -115,22 +115,52 @@ current_date_8am = datetime.now().replace(hour=8, minute=0, second=0, microsecon
 
 
 def fetch_data(start_time ,mid_time , end_time ):
+    # query = text("""
+    #     SELECT monitoring.*, production.mould_id, production.machine_code
+    #     FROM machine_monitoring.monitoring AS monitoring
+    #     INNER JOIN machine_monitoring.mass_production AS production
+    #         ON monitoring.mp_id = production.mp_id
+    #     WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+    #     AND monitoring.action IN ('downtime');
+    # """)
+
     query = text("""
-        SELECT monitoring.*, production.mould_id, production.machine_code
-        FROM machine_monitoring.monitoring AS monitoring
-        INNER JOIN machine_monitoring.mass_production AS production
-            ON monitoring.mp_id = production.mp_id
-        WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-        AND monitoring.action IN ('downtime');
+        SELECT 
+        monitoring.*, 
+        mp.mould_id, 
+        mp.machine_code, 
+        ml.standard_ct
+    FROM machine_monitoring.monitoring AS monitoring
+    INNER JOIN machine_monitoring.mass_production AS mp
+        ON monitoring.mp_id = mp.mp_id
+    INNER JOIN machine_monitoring.mould_list AS ml
+        ON mp.mould_id = ml.mould_code
+    WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+    AND monitoring.action = 'downtime';
     """)
 
+    # query2 = text("""
+    #     SELECT monitoring.*, production.mould_id, production.machine_code
+    #     FROM machine_monitoring.monitoring AS monitoring
+    #     INNER JOIN machine_monitoring.mass_production AS production
+    #         ON monitoring.mp_id = production.mp_id
+    #     WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+    #     AND monitoring.action IN ('normal_cycle');
+    # """)
+
     query2 = text("""
-        SELECT monitoring.*, production.mould_id, production.machine_code
-        FROM machine_monitoring.monitoring AS monitoring
-        INNER JOIN machine_monitoring.mass_production AS production
-            ON monitoring.mp_id = production.mp_id
-        WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-        AND monitoring.action IN ('normal_cycle');
+            SELECT 
+        monitoring.*, 
+        mp.mould_id, 
+        mp.machine_code, 
+        ml.standard_ct
+    FROM machine_monitoring.monitoring AS monitoring
+    INNER JOIN machine_monitoring.mass_production AS mp
+        ON monitoring.mp_id = mp.mp_id
+    INNER JOIN machine_monitoring.mould_list AS ml
+        ON mp.mould_id = ml.mould_code
+    WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+    AND monitoring.action IN ('normal_cycle');
     """)
 
     # Run query and load into a DataFrame
@@ -144,12 +174,12 @@ def fetch_data(start_time ,mid_time , end_time ):
 
 
         # Get unique machine_code and corresponding mould_id
-        machines_running = df_unique.groupby(["mp_id", "machine_code"])["mould_id"].first().reset_index()
+        machines_running = df_unique.groupby(["mp_id", "machine_code", "standard_ct"])["mould_id"].first().reset_index()
         # print(machines_running)
 
-        # Convert to DataFrame
-        df_main = pd.DataFrame(machines_running)
-        # print(df_main)
+        # # Convert to DataFrame
+        # df_main = pd.DataFrame(machines_running)
+        # # print(df_main)
 
         df = pd.read_sql(query, connection, params={
             "start_time": start_time,
@@ -178,13 +208,15 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
 
     # If there's no data at all, return an empty DataFrame with the expected columns
     if shift1.empty and shift2.empty and df_unique_raw.empty:
-        return (pd.DataFrame(columns=[
-            "mp_id", "machine_code", "mould_id", "total_stops",
-            "shift_1_stops", "shift_1_downtime",
-            "shift_2_stops", "shift_2_downtime",
-            # add any other columns expected from information_df below
-        ]),
-    {"shift_1_totaldt": 0, "shift_2_totaldt": 0, "overall_totaldt": 0})
+        return (
+            pd.DataFrame(columns=[
+                "mp_id", "machine_code", "mould_id", "total_stops",
+                "shift_1_stops", "shift_1_downtime",
+                "shift_2_stops", "shift_2_downtime", "standard_ct",
+                # add any other columns expected from information_df below
+            ]),
+            {"shift_1_totaldt": 0, "shift_2_totaldt": 0, "overall_totaldt": 0}
+        )
 
     information_df = fetch_data_variation(date)
 
@@ -192,7 +224,7 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
         information_df = calculate_filtered_variance_by_group(information_df, "mp_id", "time_taken")
 
     # Ensure df_unique has one row per mp_id
-    df_unique = df_unique_raw[["mp_id", "machine_code", "mould_id"]].drop_duplicates(subset="mp_id")
+    df_unique = df_unique_raw[["mp_id", "machine_code", "mould_id", "standard_ct"]].drop_duplicates(subset="mp_id")
 
     # Aggregate data for Shift 1
     df_counts1 = shift1.groupby("mp_id").agg(
@@ -240,6 +272,7 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
         cols.insert(mould_index + 1, 'total_stops')
         merged = merged[cols]
     # print("Returning from daily_report:", merged)
+    merged = merged.sort_values(by="total_stops", ascending=False).reset_index(drop=True)
 
     return merged, {"shift_1_totaldt": shift1_totaldt, "shift_2_totaldt": shift2_totaldt, "overall_totaldt": overall_totaldt}
 
@@ -324,7 +357,7 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
  
     
     query = """
-        SELECT DISTINCT m.*, mm.cycle_time 
+        SELECT DISTINCT m.*, mm.standard_ct 
         FROM monitoring AS m
         JOIN joblist AS j ON m.main_id = j.main_id
         JOIN mould_list AS mm ON j.mould_code = mm.mould_code
@@ -379,7 +412,7 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
     total_running = dff['time_taken'].sum()
     median_cycle_time = round(df["time_taken"].median(), 2)
 
-    cycle_time = df['cycle_time'].values[0]  # Safe to access now
+    cycle_time = df['cycle_time'].values[0]  
     ideal_time = total_shots * cycle_time
     downtime = dff['time_taken'].values[1]
 
@@ -707,12 +740,10 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
 
         # Run query and load into a DataFrame
     with db_connection_str.connect() as connection:
-
         df = pd.read_sql(query, connection, params={
             "start_time": start_time,
             "end_time": end_time
         })
-
 
     if df.empty:
         return df, 0.0, 0.0, 0.0, 0.0
@@ -720,32 +751,32 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
     # Convert to timedelta
     df['total_running_time'] = pd.to_timedelta(df['total_running_time'])
 
-    # Compute machine capacity as % of 24 hours
-    # df['machine_capacity'] = (df['normal_cycle_time'] / 24  * 100 ).round(2)
-    df = df.drop(columns=['total_running_time'])  # Drop if not needed later
+    # Add downtime column (24h - normal cycle time)
+    df['downtime'] = 24 - df['normal_cycle_time']
+    df['efficiency'] = (df['normal_cycle_time'] / 24 * 100).round(2)
+
+    # Drop if not needed later
+    df = df.drop(columns=['total_running_time'])  
 
     # Summary calculations
     actual_total_gain_hr = df['normal_cycle_time'].sum()
-    ideal_overall_machine_capacity = 24 * 18
-    act_avail_hr = df["total_time_taken"].sum()
+    ideal_overall_machine_capacity = 24 * 20
+    act_avail_hr = df["total_time_taken"].sum() 
 
     actual_running_machines = len(df) * 24
-    # print(f"Actual Running Machines: {actual_running_machines}")
 
-    # "TTL ACT GAIN HR / TTL ACT AVAIL HR"
-    # Capacities and efficiency
-    over_act_eff = round((actual_total_gain_hr / act_avail_hr) * 100, 2)
+    # over_act_eff = round((actual_total_gain_hr / act_avail_hr) * 100, 2)
+    over_act_eff = round((actual_total_gain_hr / ideal_overall_machine_capacity) * 100, 2)
 
     ovr_mc_capacity = round((actual_total_gain_hr / ideal_overall_machine_capacity) * 100, 2)
-
-    actual_mc_capacity = round((actual_total_gain_hr / actual_running_machines  ) * 100, 2) 
-    
+    actual_mc_capacity = round((actual_total_gain_hr / actual_running_machines) * 100, 2) 
     overall_eff = round((df['efficiency_percent'].sum() / len(df)), 2)
 
     if df.empty:
         return df, 0, 0, 0, 0
     else:
         return df, over_act_eff, ovr_mc_capacity, overall_eff, actual_mc_capacity
+
 
 
 def combined_output(date):
@@ -793,13 +824,14 @@ def combined_output(date):
         'downtime_time',
         'total_adjustment_hr',
         'total_change_mould_hr',
+        'downtime'
     ]
 
         # Totals for numeric columns
     df_merged.loc['Total', numeric_cols] = df_merged[numeric_cols].sum().round(2)
 
     # Aggregate metrics instead of blanking
-    df_merged.loc['Total', 'efficiency_percent'] = round(df_merged['efficiency_percent'].mean(), 2) if not df_merged['efficiency_percent'].empty else 0.0
+    df_merged.loc['Total', 'efficiency'] = round(df_merged['efficiency'].mean(), 2) if not df_merged['efficiency'].empty else 0.0
 
 
     
@@ -814,17 +846,19 @@ def combined_output(date):
     # Reorder columns
     desired_order = [
         'machine_code',
-        'total_time_taken',
+        'total_time_taken', 
         'normal_cycle_time',
-        'abnormal_cycle_time',
-        'downtime_time',
+        'downtime',
+        # 'abnormal_cycle_time',
+        # 'downtime_time',
         'total_adjustment_hr',
         'total_change_mould_hr',
         'shot_count',
         'first_input_time',
         'last_input_time',
-        'efficiency_percent',
-        'machine_capacity'
+        'efficiency',
+        # 'efficiency_percent',
+        # 'machine_capacity'
     ]
     df_merged = df_merged.reindex(columns=desired_order)
     
@@ -836,7 +870,7 @@ def combined_output(date):
 
 # df, x, y = get_mould_activities("2025-07-02")
 # print(df, x,y)
-# print(combined_output("2025-08-14"))
-# print(mould_activities("2025-08-07"))
-# print(efficiency_sql_only("2025-08-19"))
-print(daily_report())
+# print(combined_output("2025-08-25"))
+# print(mould_activities("2025-08-20"))
+# print(efficiency_sql_only("2025-09-03"))
+# print(daily_report())
