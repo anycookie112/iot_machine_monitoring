@@ -116,27 +116,28 @@ current_date_8am = datetime.now().replace(hour=8, minute=0, second=0, microsecon
 
 def fetch_data(start_time ,mid_time , end_time ):
     # query = text("""
-    #     SELECT monitoring.*, production.mould_id, production.machine_code
-    #     FROM machine_monitoring.monitoring AS monitoring
-    #     INNER JOIN machine_monitoring.mass_production AS production
-    #         ON monitoring.mp_id = production.mp_id
-    #     WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-    #     AND monitoring.action IN ('downtime');
+        # SELECT monitoring.*, production.mould_id, production.machine_code
+        # FROM machine_monitoring.monitoring AS monitoring
+        # INNER JOIN machine_monitoring.mass_production AS production
+        #     ON monitoring.mp_id = production.mp_id
+        # WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+        # AND monitoring.action IN ('downtime');
     # """)
 
     query = text("""
-        SELECT 
-        monitoring.*, 
-        mp.mould_id, 
-        mp.machine_code, 
-        ml.standard_ct
+    SELECT
+        monitoring.*,
+        MAX(production.mould_id) AS mould_id,
+        MAX(production.machine_code) AS machine_code,
+        MAX(ml.standard_ct) AS standard_ct
     FROM machine_monitoring.monitoring AS monitoring
-    INNER JOIN machine_monitoring.mass_production AS mp
-        ON monitoring.mp_id = mp.mp_id
+    INNER JOIN machine_monitoring.mass_production AS production
+        ON monitoring.mp_id = production.mp_id
     INNER JOIN machine_monitoring.mould_list AS ml
-        ON mp.mould_id = ml.mould_code
+        ON production.mould_id = ml.mould_code
     WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-    AND monitoring.action = 'downtime';
+    AND monitoring.action IN ('downtime')
+    GROUP BY monitoring.idmonitoring;
     """)
 
     # query2 = text("""
@@ -149,18 +150,20 @@ def fetch_data(start_time ,mid_time , end_time ):
     # """)
 
     query2 = text("""
-            SELECT 
-        monitoring.*, 
-        mp.mould_id, 
-        mp.machine_code, 
-        ml.standard_ct
+    SELECT 
+        monitoring.*,
+        MAX(mp.mould_id) AS mould_id,
+        MAX(mp.machine_code) AS machine_code,
+        MAX(ml.standard_ct) AS standard_ct
     FROM machine_monitoring.monitoring AS monitoring
     INNER JOIN machine_monitoring.mass_production AS mp
         ON monitoring.mp_id = mp.mp_id
     INNER JOIN machine_monitoring.mould_list AS ml
         ON mp.mould_id = ml.mould_code
     WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-    AND monitoring.action IN ('normal_cycle');
+    AND monitoring.action = 'normal_cycle'
+    GROUP BY monitoring.idmonitoring;  
+
     """)
 
     # Run query and load into a DataFrame
@@ -205,6 +208,7 @@ def fetch_data(start_time ,mid_time , end_time ):
 def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
     start_time, mid_time, end_time = date_calculation(date)
     df_unique_raw, shift1, shift2 = fetch_data(start_time, mid_time, end_time)
+    # print(df_unique_raw, shift1, shift2)
 
     # If there's no data at all, return an empty DataFrame with the expected columns
     if shift1.empty and shift2.empty and df_unique_raw.empty:
@@ -412,7 +416,7 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
     total_running = dff['time_taken'].sum()
     median_cycle_time = round(df["time_taken"].median(), 2)
 
-    cycle_time = df['cycle_time'].values[0]  
+    cycle_time = df['standard_ct'].values[0]  
     ideal_time = total_shots * cycle_time
     downtime = dff['time_taken'].values[1]
 
@@ -873,4 +877,11 @@ def combined_output(date):
 # print(combined_output("2025-08-25"))
 # print(mould_activities("2025-08-20"))
 # print(efficiency_sql_only("2025-09-03"))
-# print(daily_report())
+# date = "2025-09-05"
+# date = datetime.strptime(date, "%Y-%m-%d")
+# print(daily_report(date))
+
+# start_time, mid_time, end_time = date_calculation(date)
+# df_unique_raw, shift1, shift2 = fetch_data(start_time, mid_time, end_time)
+
+# print(df_unique_raw, shift1, shift2)
