@@ -140,10 +140,19 @@ grid_daily = dag.AgGrid(
         {"field": "variance", "headerName": "CT Variance", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
         {"field": "mp_id", "headerName": "MP ID", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 80},
     ],
-    rowClassRules = {
-    "text-success fw-bold fs-4": "params.data.standard_ct > (params.data.median_cycle_time * 1.06)",
-    "text-warning fw-bold fs-4": "params.data.median_cycle_time > (params.data.standard_ct * 1.03)",
-    },
+rowClassRules = {
+    # Green shades (faster than standard)
+    "text-success fw-bold fs-4": "params.data.median_cycle_time < (params.data.standard_ct * 0.97)",  # >3% faster
+    "text-success fw-bold fs-4": "params.data.median_cycle_time < (params.data.standard_ct * 0.93)",  # >7% faster
+
+    # Warning / Danger (slower than standard)
+    "text-warning fw-bold fs-4": "params.data.median_cycle_time > (params.data.standard_ct * 1.03)",  # >3% slower
+    "text-danger fw-bold fs-4": "params.data.median_cycle_time > (params.data.standard_ct * 1.07)"   # >7% slower
+}
+
+,
+
+
     rowStyle={"fontSize": "25px", "bold": True},
   
     
