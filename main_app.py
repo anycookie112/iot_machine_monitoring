@@ -19,7 +19,8 @@ sidebar_content = html.Div([
             dbc.NavLink("Home", href="/", active="exact"),
             dbc.NavLink("Machine Status", href="/page-1", active="exact"),
             dbc.NavLink("Daily Report", href="/daily", active="exact"),
-            # dbc.NavLink("Monthly Report", href="/monthly", active="exact"),
+            dbc.NavLink("Add Mould", href="/mould", active="exact"),
+            dbc.NavLink("Live", href="/live", active="exact"),
         ],
         vertical=True,
         pills=True,
@@ -109,5 +110,5 @@ def toggle_sidebar(n_clicks, is_open):
     return new_is_open, sidebar_style, content_style
 
 if __name__ == "__main__":
-    # app.run_server(port=8888, debug=True) 
-    app.run_server(port=8888)
+    app.run_server(port=8888, debug=True) 
+    # app.run_server(port=8888)

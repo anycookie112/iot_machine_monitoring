@@ -22,8 +22,8 @@ import plotly.express as px
 
 
 
-# dash.register_page(__name__, path="/daily")
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+dash.register_page(__name__, path="/daily")
+# app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 page = "daily"
 
@@ -297,7 +297,7 @@ def create_table(dataframe):
 
 
 
-app.layout = html.Div([
+layout = html.Div([
     refresh,
     dcc.Tabs([
         
@@ -610,6 +610,6 @@ def update_date(btn1_clicks, btn2_clicks):
 #     return llm_report(date)
 
 
-if __name__ == "__main__":
-    app.run_server(port=8888, debug=True) 
-    # app.run_server(port=8888)
+# if __name__ == "__main__":
+#     app.run_server(port=8888, debug=True) 
+#     # app.run_server(port=8888)

@@ -275,11 +275,60 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
         mould_index = cols.index('mould_id')
         cols.insert(mould_index + 1, 'total_stops')
         merged = merged[cols]
-    # print("Returning from daily_report:", merged)
     merged = merged.sort_values(by="total_stops", ascending=False).reset_index(drop=True)
 
     return merged, {"shift_1_totaldt": shift1_totaldt, "shift_2_totaldt": shift2_totaldt, "overall_totaldt": overall_totaldt}
 
+
+# def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
+#     if isinstance(date, str):
+#         date = datetime.strptime(date, "%Y-%m-%d")
+    
+#     start, _, end = date_calculation(date)
+    
+#     if mp_id:
+#         df, _ = calculate_downtime(mp_id)
+#         df["time_input"] = pd.to_datetime(df["time_input"])
+
+#         # Filter to the defined date range
+#         df = df[(df["time_input"] >= start) & (df["time_input"] < end)]
+
+
+#         df2 = df[df["action"] == "abnormal_cycle"].copy()
+#         # Only keep rows with action == "downtime"
+#         df = df[df["action"] == "downtime"].copy()
+
+        
+#         print(df2)
+#         # Assign hour and shift
+#         df["hour"] = df["time_input"].dt.hour
+#         df["shift"] = df["time_input"].apply(
+#             lambda x: "Shift 1" if 8 <= x.hour < 20 else "Shift 2"
+#         )
+
+#         # Group by shift and hour
+#         grouped = df.groupby(["shift", "hour"]).size().reset_index(name="stops")
+
+#         # Fill in all hours for Shift 1 (8–19) and Shift 2 (20–23 and 0–7)
+#         shift1_hours = pd.DataFrame({"hour": range(8, 20)})
+#         shift2_hours = pd.DataFrame({"hour": list(range(20, 24)) + list(range(0, 8))})
+
+#         shift1 = shift1_hours.merge(
+#             grouped[grouped["shift"] == "Shift 1"], on="hour", how="left"
+#         ).fillna(0).infer_objects(copy=False)
+#         shift1["stops"] = shift1["stops"].astype(int)
+#         shift1["shift"] = "Shift 1"
+
+#         shift2 = shift2_hours.merge(
+#             grouped[grouped["shift"] == "Shift 2"], on="hour", how="left"
+#         ).fillna(0).infer_objects(copy=False)
+#         shift2["stops"] = shift2["stops"].astype(int)
+#         shift2["shift"] = "Shift 2"
+
+#         return shift1, shift2
+#     else:
+#         print("No MP ID provided.")
+#         return pd.DataFrame(), pd.DataFrame()
 
 def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
     if isinstance(date, str):
@@ -294,39 +343,47 @@ def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, m
         # Filter to the defined date range
         df = df[(df["time_input"] >= start) & (df["time_input"] < end)]
 
-        # Only keep rows with action == "downtime"
-        df = df[df["action"] == "downtime"].copy()
+        # Split downtime and abnormal_cycle
+        df_downtime = df[df["action"] == "downtime"].copy()
+        df_abnormal = df[df["action"] == "abnormal_cycle"].copy()
 
-        # Assign hour and shift
-        df["hour"] = df["time_input"].dt.hour
-        df["shift"] = df["time_input"].apply(
-            lambda x: "Shift 1" if 8 <= x.hour < 20 else "Shift 2"
-        )
+        # Assign hour and shift for both
+        for d in [df_downtime, df_abnormal]:
+            d["hour"] = d["time_input"].dt.hour
+            d["shift"] = d["time_input"].apply(
+                lambda x: "Shift 1" if 8 <= x.hour < 20 else "Shift 2"
+            )
 
-        # Group by shift and hour
-        grouped = df.groupby(["shift", "hour"]).size().reset_index(name="stops")
+        # Group both
+        grouped_downtime = df_downtime.groupby(["shift", "hour"]).size().reset_index(name="stops")
+        grouped_abnormal = df_abnormal.groupby(["shift", "hour"]).size().reset_index(name="stops_abnormal")
 
         # Fill in all hours for Shift 1 (8–19) and Shift 2 (20–23 and 0–7)
         shift1_hours = pd.DataFrame({"hour": range(8, 20)})
         shift2_hours = pd.DataFrame({"hour": list(range(20, 24)) + list(range(0, 8))})
 
-        shift1 = shift1_hours.merge(
-            grouped[grouped["shift"] == "Shift 1"], on="hour", how="left"
-        ).fillna(0).infer_objects(copy=False)
-        shift1["stops"] = shift1["stops"].astype(int)
-        shift1["shift"] = "Shift 1"
+        def merge_shift(shift_hours, shift_name):
+            merged = (
+                shift_hours
+                .merge(grouped_downtime[grouped_downtime["shift"] == shift_name], on="hour", how="left")
+                .merge(grouped_abnormal[grouped_abnormal["shift"] == shift_name], on="hour", how="left")
+                .fillna(0)
+                .infer_objects(copy=False)
+            )
+            merged["stops"] = merged["stops"].astype(int)
+            merged["stops_abnormal"] = merged["stops_abnormal"].astype(int)
+            merged["shift"] = shift_name
+            return merged
 
-        shift2 = shift2_hours.merge(
-            grouped[grouped["shift"] == "Shift 2"], on="hour", how="left"
-        ).fillna(0).infer_objects(copy=False)
-        shift2["stops"] = shift2["stops"].astype(int)
-        shift2["shift"] = "Shift 2"
+        shift1 = merge_shift(shift1_hours, "Shift 1")
+        shift2 = merge_shift(shift2_hours, "Shift 2")
 
         return shift1, shift2
     else:
         print("No MP ID provided.")
         return pd.DataFrame(), pd.DataFrame()
 
+# print(hourly(449, "2025-09-24"))
 
 def date_calculation_new(date):
     # Ensure date is a datetime.date object
@@ -885,3 +942,4 @@ def combined_output(date):
 # df_unique_raw, shift1, shift2 = fetch_data(start_time, mid_time, end_time)
 
 # print(df_unique_raw, shift1, shift2)
+

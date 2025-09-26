@@ -7,12 +7,21 @@ import json
 import threading
 import time
 import dash
+import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+
 from utils.efficiency import update_sql
 from config.config import MQTT_CONFIG, DB_CONFIG
 from utils.filter_mould import get_mould_list
 from utils.overide import logging_stop_override
 from utils.mqtt import publish_message
 from utils.timer import Timer, TimerNew, toggle_machine_timer
+
+
+
 
 t = Timer()
 t_adjust = Timer()
@@ -89,7 +98,69 @@ short_hand = html.Div(
 )
 
 
-dash.register_page(__name__, path='/')
+
+###
+
+select2 = html.Div(
+    dbc.Select(
+        mould_code_select,
+        id="shorthand-select2",
+    ),
+    className="py-2",
+)
+
+short_hand2 = html.Div(
+    [
+        dbc.Form([select2]),
+        html.P(id="shorthand-output2"),
+    ]
+)
+
+###
+
+
+action_checklist = html.Div(
+    [
+        dbc.Label("Action"),
+        dbc.RadioItems(
+            options=[
+                {"label": "Change Mould", "value": 'chang_mould'},
+                {"label": "Adjustment", "value": 'adjustment'},
+                {"label": "Testing", "value": 'test'},
+
+            ],
+            value=[],
+            id="action-checklist",
+            inline=True,
+        ),
+    ]
+)
+"""
+
+item select 
+so select action from drop down
+change mould, adjustment, testing 
+
+if change mould selected show mould select options
+
+adjustment and testing just show confirm output 
+then when end (will dynamic have problem ?)
+just have to based on the database current machine action?
+
+so search db, check what is current status of machine 
+based on status insert new row into monitoring table
+
+
+change material is seperate (for now)
+
+
+
+
+
+"""
+
+
+# dash.register_page(__name__, path='/')
 
 layout = html.Div([
 
@@ -108,6 +179,13 @@ layout = html.Div([
     dbc.Alert(
             "Start Logging Data",
             id="alert-auto-on",
+            is_open=False,
+            duration=4000,
+        ),
+
+    dbc.Alert(
+            "Start Action",
+            id="alert-auto-action",
             is_open=False,
             duration=4000,
         ),
@@ -153,7 +231,18 @@ layout = html.Div([
                     dbc.ButtonGroup(
                         [
                           dbc.Button("Adjustment", id="qas", n_clicks=0, className="btn btn-primary me-2 mb-2"),
-                        dbc.Button("Adjustment", id="qae", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
+                        dbc.Button("Adjustment End", id="qae", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
+                        ],
+                        className="gap-3"
+                    ),
+                    className="d-flex justify-content-center align-items-center mb-4",
+                ),
+
+                dbc.Row(
+                    dbc.ButtonGroup(
+                        [
+                          dbc.Button("Action Start", id="as", n_clicks=0, className="btn btn-primary me-2 mb-2"),
+                        dbc.Button("Action End", id="ae", n_clicks=0, color="danger", className="btn btn-primary mb-2"),
                         ],
                         className="gap-3"
                     ),
@@ -249,7 +338,26 @@ layout = html.Div([
             is_open=False,
         )
     ]),   
-    
+
+    html.Div([
+        dbc.Modal(
+            [
+                dbc.ModalHeader(dbc.ModalTitle("Header")),
+                dbc.ModalBody([
+                               action_checklist,
+                               short_hand2
+                               
+                                
+                        ]),
+                dbc.ModalFooter([
+                    dbc.Button("Yes", id="yes-5",  n_clicks=0),
+                    dbc.Button("No", color="primary", id="no-5", className="ms-auto", n_clicks=0),
+                ]),
+            ],
+            id="confirmation-action",
+            is_open=False,
+        )
+    ]),   
 
 ])
 
@@ -745,3 +853,64 @@ def mould_filter(customer):
     updated_list = get_mould_list(customer)
     return updated_list
     
+
+
+
+@callback(
+    Output("confirmation-action", "is_open"),
+    [Input("as", "n_clicks"), Input("no-5", "n_clicks"), Input("yes-5", "n_clicks"), Input('shorthand-select2', 'value')],
+    [State("confirmation-action", "is_open"), State("machine_id", "value")]
+)
+def action_start(ums, close, ok, mould_id,  is_open, machine_id):
+    # Identify which input triggered the callback
+    mqtt_machine = f"machines/{machine_id}"
+    triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0] if callback_context.triggered else None
+
+    # Handle "UMS" button click
+    if triggered_id == "as":
+        return not is_open
+
+    # Handle "Close" button click
+    if triggered_id == "close":
+        return False  # Close the modal
+
+    # Handle "OK" button click
+    if triggered_id == "ok":
+        if not mould_id or not mould_id.strip():
+            # If name is empty or just whitespace, do nothing (keep modal open)
+            return True
+        try:
+            # toggle_machine_timer(machine_id)
+            # Database update
+            connection = create_engine(db_connection_str).raw_connection()
+            with connection.cursor() as cursor:
+                sql = "UPDATE machine_list SET mould_id = %s, machine_status = 'change mould in progress' WHERE machine_code = %s"
+                cursor.execute(sql, (str(mould_id), str(machine_id)))
+
+                sql_insert = "INSERT INTO joblist (machine_code, mould_code, time_input) VALUES (%s, %s, NOW())"
+                cursor.execute(sql_insert, (str(machine_id), str(mould_id)))
+                main_id = cursor.lastrowid
+
+
+                sql_insert_log = """
+                INSERT INTO monitoring (main_id, action, time_taken, time_input)
+                VALUES (%s, "change mould start", %s, NOW())
+                """
+                cursor.execute(sql_insert_log, (str(main_id), 0,))
+
+                connection.commit()
+
+                message = json.dumps({"command": "ums"})
+                publish_message(mqtt_machine, message, qos=2)  
+
+        except Exception as e:
+            print(f"Error updating database: {e}")
+        finally:
+            connection.close()
+        return False  # Close the modal after successful action
+
+    # Default case: No button was clicked
+    return is_open
+
+# if __name__ == "__main__":
+#     app.run_server(port=8888, debug=True) 
