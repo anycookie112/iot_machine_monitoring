@@ -132,13 +132,13 @@ layout = dbc.Container(
     State("customer_dropdown", "value"),
     prevent_initial_call=True
 )
-def insert_mould(n_clicks, mould_code, model_number, part_name, part_code, standard_ct, customer_id):
+def insert_mould(n_clicks, mould_code, model_number, part_name, part_code, standard_ct, customer):
     try:
         with engine.begin() as conn:
             conn.execute(
                 text("""
-                    INSERT INTO mould_list (mould_code, model_number, part_name, part_code, standard_ct, customer_id)
-                    VALUES (:mould_code, :model_number, :part_name, :part_code, :standard_ct, :customer_id)
+                    INSERT INTO mould_list (mould_code, model_number, part_name, part_code, standard_ct, customer)
+                    VALUES (:mould_code, :model_number, :part_name, :part_code, :standard_ct, :customer)
                 """),
                 {
                     "mould_code": mould_code,
@@ -146,7 +146,7 @@ def insert_mould(n_clicks, mould_code, model_number, part_name, part_code, stand
                     "part_name": part_name,
                     "part_code": part_code,
                     "standard_ct": standard_ct,
-                    "customer_id": customer_id
+                    "customer": customer
                 }
             )
         return (
@@ -155,7 +155,7 @@ def insert_mould(n_clicks, mould_code, model_number, part_name, part_code, stand
         )
     except Exception as e:
         return (dbc.Alert(f"Error: {e}", color="danger"),
-                mould_code, model_number, part_name, part_code, standard_ct, customer_id)
+                mould_code, model_number, part_name, part_code, standard_ct, customer)
 
 # if __name__ == "__main__":
 #     app.run_server(debug=True)

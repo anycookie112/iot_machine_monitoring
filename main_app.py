@@ -20,7 +20,7 @@ sidebar_content = html.Div([
             dbc.NavLink("Machine Status", href="/page-1", active="exact"),
             dbc.NavLink("Daily Report", href="/daily", active="exact"),
             dbc.NavLink("Add Mould", href="/mould", active="exact"),
-            dbc.NavLink("Live", href="/live", active="exact"),
+           # dbc.NavLink("Live", href="/live", active="exact"),
         ],
         vertical=True,
         pills=True,
