@@ -267,6 +267,7 @@ def create_table(dataframe):
         "normal_cycle_time": "Actual Gain (Hrs)",
         "abnormal_cycle_time": "Abnormal CT (Hrs)",
         "downtime_time": "Downtime (Hr)",
+        "downtime": "Downtime (Hrs)",
         "shot_count": "Shot Count",
         "first_input_time": "Start Time",
         "last_input_time": "End Time",
@@ -580,10 +581,10 @@ def update_productivity_table(active_tab, selected_date):
         return dash.no_update, dash.no_update, dash.no_update
 
     if not selected_date:
-        return html.P("Please select a date."), "", ""
+        return html.P("Please select a date."), "0%", "0%"
     selected_date = _to_date_str(selected_date)
 
-    df, overall, running, eff, act_cap = _cached_combined_output(selected_date)
+    df, actual_productivity, planned_productivity, _overall_efficiency = _cached_combined_output(selected_date)
     df = df.copy() if df is not None else df
 
     if df is None or df.empty:
@@ -591,25 +592,15 @@ def update_productivity_table(active_tab, selected_date):
             "machine_code", "normal_cycle_time", "abnormal_cycle_time", "downtime",
             "shot_count", "change_mould", "adjustment", "productivity", "machine_capacity"
         ])
-        return html.P("No data available for the selected date."), "", ""
+        return html.P("No data available for the selected date."), "0%", "0%"
 
     return (
         html.Div([
             html.H3(f"Productivity Data for {selected_date}", style={"textAlign": "center", "marginBottom": "20px"}),
             create_table(df)
         ]),
-        [
-            # html.H4("Overall Productivity"),
-            html.P(f"{overall}%", className="card-text")
-        ],
-        # [
-        #     # html.H4("Machine Productivity"),
-        #     html.P(f"{running}%", className="card-text")
-        # ],
-        [
-            # html.H4("Act Machine Productivity"),
-            html.P(f"{act_cap}%", className="card-text")
-        ]
+        f"{actual_productivity}%",
+        f"{planned_productivity}%"
     )
 
 

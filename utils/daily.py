@@ -760,7 +760,7 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
 
 
 
-def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
+def efficiency_sql_only(date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
     
     if isinstance(date, str):
         date = datetime.strptime(date, "%Y-%m-%d")
@@ -808,45 +808,29 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
         })
 
     if df.empty:
-        return df, 0.0, 0.0, 0.0, 0.0
+        return df
 
     # Convert to timedelta
     df['total_running_time'] = pd.to_timedelta(df['total_running_time'])
 
-    # Add downtime column (24h - normal cycle time)
+    # Keep both the raw SQL efficiency and the 24-hour gap view used by the table.
     df['downtime'] = 24 - df['normal_cycle_time']
-    df['efficiency'] = (df['normal_cycle_time'] / 24 * 100).round(2)
+    df['efficiency'] = df['efficiency_percent'].round(2)
 
     # Drop if not needed later
-    df = df.drop(columns=['total_running_time'])  
-
-    # Summary calculations
-    actual_total_gain_hr = df['normal_cycle_time'].sum()
-    ideal_overall_machine_capacity = 24 * 20
-    act_avail_hr = df["total_time_taken"].sum() 
-
-    actual_running_machines = len(df) * 24
-
-    # over_act_eff = round((actual_total_gain_hr / act_avail_hr) * 100, 2)
-    over_act_eff = round((actual_total_gain_hr / ideal_overall_machine_capacity) * 100, 2)
-
-    ovr_mc_capacity = round((actual_total_gain_hr / ideal_overall_machine_capacity) * 100, 2)
-    actual_mc_capacity = round((actual_total_gain_hr / actual_running_machines) * 100, 2) 
-    overall_eff = round((df['efficiency_percent'].sum() / len(df)), 2)
-
-    if df.empty:
-        return df, 0, 0, 0, 0
-    else:
-        return df, over_act_eff, ovr_mc_capacity, overall_eff, actual_mc_capacity
+    return df.drop(columns=['total_running_time'])
 
 
 
 def combined_output(date, actions_result=None):
-    df_summary, actual_machine_capacity_overall, actual_capacity_running, overall_eff, actual_mc_capacity = efficiency_sql_only(date)
+    df_summary = efficiency_sql_only(date)
     if actions_result is None:
         df_actions, x, y = mould_activities(date)
     else:
         df_actions, x, y = actions_result
+
+    if df_summary is None or df_summary.empty:
+        return df_summary, 0.0, 0.0, 0.0
 
     df_summary = df_summary.copy()
     df_actions = df_actions.copy()
@@ -882,7 +866,19 @@ def combined_output(date, actions_result=None):
     )
 
 
-    df_merged['machine_capacity'] = (df_merged['normal_cycle_time'] / 24  * 100 ).round(2)
+    df_merged['machine_capacity'] = (df_merged['normal_cycle_time'] / 24 * 100).round(2)
+    df_merged['efficiency'] = (
+        (df_merged['normal_cycle_time'] / df_merged['total_time_taken'].where(df_merged['total_time_taken'] > 0)) * 100
+    ).fillna(0).round(2)
+
+    actual_total_gain_hr = df_merged['normal_cycle_time'].sum()
+    total_actual_avail_hr = df_merged['total_time_taken'].sum()
+    running_machine_count = len(df_merged.index)
+    planned_capacity_hours = running_machine_count * 24
+
+    actual_productivity = float(round((actual_total_gain_hr / total_actual_avail_hr) * 100, 2)) if total_actual_avail_hr else 0.0
+    planned_productivity = float(round((actual_total_gain_hr / planned_capacity_hours) * 100, 2)) if planned_capacity_hours else 0.0
+    overall_efficiency = actual_productivity
 
     # Create totals for all numeric columns you care about
     numeric_cols = [
@@ -898,13 +894,10 @@ def combined_output(date, actions_result=None):
         # Totals for numeric columns
     df_merged.loc['Total', numeric_cols] = df_merged[numeric_cols].sum().round(2)
 
-    # Aggregate metrics instead of blanking
-    df_merged.loc['Total', 'efficiency'] = round(df_merged['efficiency'].mean(), 2) if not df_merged['efficiency'].empty else 0.0
-
-
-    
-    df_merged.loc['Total', 'machine_capacity'] = round(df_merged['machine_capacity'].mean(), 2) if not df_merged['machine_capacity'].empty else 0.0
-    df_merged.loc['Total', 'shot_count'] = round(df_merged['shot_count'].mean(), 2) if not df_merged['shot_count'].empty else 0.0
+    # Aggregate metrics instead of blanking.
+    df_merged.loc['Total', 'efficiency'] = overall_efficiency
+    df_merged.loc['Total', 'machine_capacity'] = planned_productivity
+    df_merged.loc['Total', 'shot_count'] = round(df_merged['shot_count'].sum(), 2) if not df_merged['shot_count'].empty else 0.0
 
     # Clear non-summed columns
     for col in ['machine_code', 'first_input_time', 'last_input_time']:
@@ -930,7 +923,7 @@ def combined_output(date, actions_result=None):
     ]
     df_merged = df_merged.reindex(columns=desired_order)
     
-    return df_merged, actual_machine_capacity_overall, actual_capacity_running, overall_eff, actual_mc_capacity
+    return df_merged, actual_productivity, planned_productivity, overall_efficiency
     
 
 
