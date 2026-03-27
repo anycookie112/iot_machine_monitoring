@@ -60,7 +60,7 @@ def fetch_data_variation(date = datetime.now().replace(hour=8, minute=0, second=
 
         df = pd.read_sql(query, connection, params={
             "start_time": start,
-            "end_time": mid
+            "end_time": end
         })
         # print(df)
     return df
@@ -91,12 +91,13 @@ def calculate_filtered_variance_by_group(df, group_col, target_col, threshold=1.
 
         filtered = group_df[(group_df[target_col] >= lower_bound) & (group_df[target_col] <= upper_bound)]
         variance = filtered[target_col].var()
+        variance = 0 if pd.isna(variance) else variance
 
         results.append({
             group_col: group_val,
-            "max_cycle_time": round(Q1, 2),
+            "min_cycle_time": round(Q1, 2),
             "median_cycle_time": round(median, 2),
-            "min_cycle_time": round(Q3, 2),
+            "max_cycle_time": round(Q3, 2),
             "variance": round(variance, 2)
         })
 
@@ -149,27 +150,25 @@ def fetch_data(start_time ,mid_time , end_time ):
     #     AND monitoring.action IN ('normal_cycle');
     # """)
 
-    query2 = text("""
-    SELECT 
-        monitoring.*,
-        MAX(mp.mould_id) AS mould_id,
-        MAX(mp.machine_code) AS machine_code,
-        MAX(ml.standard_ct) AS standard_ct
-    FROM machine_monitoring.monitoring AS monitoring
-    INNER JOIN machine_monitoring.mass_production AS mp
-        ON monitoring.mp_id = mp.mp_id
+    metadata_query = text("""
+    SELECT DISTINCT
+        mp.mp_id,
+        mp.machine_code,
+        mp.mould_id,
+        ml.standard_ct
+    FROM machine_monitoring.mass_production AS mp
     INNER JOIN machine_monitoring.mould_list AS ml
         ON mp.mould_id = ml.mould_code
+    INNER JOIN machine_monitoring.monitoring AS monitoring
+        ON monitoring.mp_id = mp.mp_id
     WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-    AND monitoring.action = 'normal_cycle'
-    GROUP BY monitoring.idmonitoring;  
-
+    AND monitoring.action IN ('normal_cycle', 'abnormal_cycle', 'downtime')
     """)
 
     # Run query and load into a DataFrame
     with db_connection_str.connect() as connection:
 
-        df_unique = pd.read_sql(query2, connection, params={
+        df_metadata = pd.read_sql(metadata_query, connection, params={
             "start_time": start_time,
             "end_time": end_time
         })
@@ -177,7 +176,7 @@ def fetch_data(start_time ,mid_time , end_time ):
 
 
         # Get unique machine_code and corresponding mould_id
-        machines_running = df_unique.groupby(["mp_id", "machine_code", "standard_ct"])["mould_id"].first().reset_index()
+        machines_running = df_metadata.drop_duplicates(subset="mp_id")
         # print(machines_running)
 
         # # Convert to DataFrame
@@ -226,6 +225,10 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
 
     if not information_df.empty:
         information_df = calculate_filtered_variance_by_group(information_df, "mp_id", "time_taken")
+    else:
+        information_df = pd.DataFrame(
+            columns=["mp_id", "min_cycle_time", "median_cycle_time", "max_cycle_time", "variance"]
+        )
 
     # Ensure df_unique has one row per mp_id
     df_unique = df_unique_raw[["mp_id", "machine_code", "mould_id", "standard_ct"]].drop_duplicates(subset="mp_id")
@@ -333,55 +336,53 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
 def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
     if isinstance(date, str):
         date = datetime.strptime(date, "%Y-%m-%d")
-    
-    start, _, end = date_calculation(date)
-    
-    if mp_id:
-        df, _ = calculate_downtime(mp_id)
-        df["time_input"] = pd.to_datetime(df["time_input"])
 
-        # Filter to the defined date range
-        df = df[(df["time_input"] >= start) & (df["time_input"] < end)]
+    report_date = date.date() if isinstance(date, datetime) else date
 
-        # Split downtime and abnormal_cycle
-        df_downtime = df[df["action"] == "downtime"].copy()
-        df_abnormal = df[df["action"] == "abnormal_cycle"].copy()
-
-        # Assign hour and shift for both
-        for d in [df_downtime, df_abnormal]:
-            d["hour"] = d["time_input"].dt.hour
-            d["shift"] = d["time_input"].apply(
-                lambda x: "Shift 1" if 8 <= x.hour < 20 else "Shift 2"
-            )
-
-        # Group both
-        grouped_downtime = df_downtime.groupby(["shift", "hour"]).size().reset_index(name="stops")
-        grouped_abnormal = df_abnormal.groupby(["shift", "hour"]).size().reset_index(name="stops_abnormal")
-
-        # Fill in all hours for Shift 1 (8–19) and Shift 2 (20–23 and 0–7)
-        shift1_hours = pd.DataFrame({"hour": range(8, 20)})
-        shift2_hours = pd.DataFrame({"hour": list(range(20, 24)) + list(range(0, 8))})
-
-        def merge_shift(shift_hours, shift_name):
-            merged = (
-                shift_hours
-                .merge(grouped_downtime[grouped_downtime["shift"] == shift_name], on="hour", how="left")
-                .merge(grouped_abnormal[grouped_abnormal["shift"] == shift_name], on="hour", how="left")
-                .fillna(0)
-                .infer_objects(copy=False)
-            )
-            merged["stops"] = merged["stops"].astype(int)
-            merged["stops_abnormal"] = merged["stops_abnormal"].astype(int)
-            merged["shift"] = shift_name
-            return merged
-
-        shift1 = merge_shift(shift1_hours, "Shift 1")
-        shift2 = merge_shift(shift2_hours, "Shift 2")
-
-        return shift1, shift2
-    else:
+    if not mp_id:
         print("No MP ID provided.")
         return pd.DataFrame(), pd.DataFrame()
+
+    # Query only the selected day's detail rows instead of loading all history for the mp_id.
+    df, _ = calculate_downtime_daily_report(mp_id, report_date)
+    if df is None or df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    df = df.copy()
+    df["time_input"] = pd.to_datetime(df["time_input"])
+
+    df_downtime = df[df["action"] == "downtime"].copy()
+    df_abnormal = df[df["action"] == "abnormal_cycle"].copy()
+
+    for current_df in (df_downtime, df_abnormal):
+        current_df["hour"] = current_df["time_input"].dt.hour
+        current_df["shift"] = current_df["time_input"].apply(
+            lambda value: "Shift 1" if 8 <= value.hour < 20 else "Shift 2"
+        )
+
+    grouped_downtime = df_downtime.groupby(["shift", "hour"]).size().reset_index(name="stops")
+    grouped_abnormal = df_abnormal.groupby(["shift", "hour"]).size().reset_index(name="stops_abnormal")
+
+    shift1_hours = pd.DataFrame({"hour": range(8, 20)})
+    shift2_hours = pd.DataFrame({"hour": list(range(20, 24)) + list(range(0, 8))})
+
+    def merge_shift(shift_hours, shift_name):
+        merged = (
+            shift_hours
+            .merge(grouped_downtime[grouped_downtime["shift"] == shift_name], on="hour", how="left")
+            .merge(grouped_abnormal[grouped_abnormal["shift"] == shift_name], on="hour", how="left")
+            .fillna(0)
+            .infer_objects(copy=False)
+        )
+        merged["stops"] = merged["stops"].astype(int)
+        merged["stops_abnormal"] = merged["stops_abnormal"].astype(int)
+        merged["shift"] = shift_name
+        return merged
+
+    shift1 = merge_shift(shift1_hours, "Shift 1")
+    shift2 = merge_shift(shift2_hours, "Shift 2")
+
+    return shift1, shift2
 
 # print(hourly(449, "2025-09-24"))
 
@@ -840,9 +841,15 @@ def efficiency_sql_only (date=datetime.now().replace(hour=8, minute=0, second=0,
 
 
 
-def combined_output(date):
+def combined_output(date, actions_result=None):
     df_summary, actual_machine_capacity_overall, actual_capacity_running, overall_eff, actual_mc_capacity = efficiency_sql_only(date)
-    df_actions, x, y = mould_activities(date)
+    if actions_result is None:
+        df_actions, x, y = mould_activities(date)
+    else:
+        df_actions, x, y = actions_result
+
+    df_summary = df_summary.copy()
+    df_actions = df_actions.copy()
 
     pivot_actions = df_actions.pivot_table(
         index='machine_code',
@@ -942,4 +949,3 @@ def combined_output(date):
 # df_unique_raw, shift1, shift2 = fetch_data(start_time, mid_time, end_time)
 
 # print(df_unique_raw, shift1, shift2)
-

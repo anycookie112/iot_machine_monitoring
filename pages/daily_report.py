@@ -4,8 +4,8 @@ import dash_ag_grid as dag
 import dash
 import pandas as pd
 from datetime import datetime, timedelta
+from functools import lru_cache
 from utils.daily import daily_report, hourly, calculate_downtime_daily_report, mould_activities, combined_output
-from utils.efficiency import  calculate_downtime_df_daily_report
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -19,6 +19,42 @@ dash.register_page(__name__, path="/daily")
 # app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 page = "daily"
+
+
+def _to_date_str(date_value):
+    if isinstance(date_value, str):
+        return date_value
+    if hasattr(date_value, "strftime"):
+        return date_value.strftime("%Y-%m-%d")
+    return str(date_value)
+
+
+@lru_cache(maxsize=64)
+def _cached_daily_report(date_str):
+    parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
+    return daily_report(parsed_date)
+
+
+@lru_cache(maxsize=128)
+def _cached_hourly(mp_id, date_str):
+    parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
+    return hourly(mp_id, parsed_date)
+
+
+@lru_cache(maxsize=128)
+def _cached_downtime_detail(mp_id, date_str):
+    return calculate_downtime_daily_report(mp_id, date_str)
+
+
+@lru_cache(maxsize=64)
+def _cached_mould_activities(date_str):
+    return mould_activities(date_str)
+
+
+@lru_cache(maxsize=64)
+def _cached_combined_output(date_str):
+    mould_result = _cached_mould_activities(date_str)
+    return combined_output(date_str, actions_result=mould_result)
 
 # Generate bar chart for machine stops
 def generate_bar_chart(shift_data, title):
@@ -55,6 +91,8 @@ def generate_bar_chart_shift(shift_data, title):
     Returns:
         dcc.Graph: Dash Graph component with the bar chart.
     """
+    # Work on a copy so cached DataFrames are not mutated.
+    shift_data = shift_data.copy()
     # Convert hour to string to prevent automatic sorting by number
     shift_data["hour_str"] = shift_data["hour"].astype(str)
 
@@ -79,16 +117,17 @@ def generate_bar_chart_shift(shift_data, title):
     return fig
 
 
-shift1, shift2 = hourly(240)
-
-df_report, downtime_info = daily_report()
-
-yesterday_date_8am = (datetime.now() - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
-current_date_8am = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
-daily_report_graph = generate_bar_chart(df_report, f"Daily Report ({yesterday_date_8am})-({current_date_8am})")
-
-bar_chart_shift_1 = generate_bar_chart_shift(shift1, "Shift 1: Machine Stops (0800 - 2000)")
-bar_chart_shift_2 = generate_bar_chart_shift(shift2, "Shift 2: Machine Stops (2000 - 0800)")
+# Keep startup lightweight; load DB-backed data via callbacks.
+df_report = pd.DataFrame(columns=[
+    "machine_code", "mould_id", "total_stops", "shift_1_stops",
+    "shift_1_downtime_minutes", "shift_2_stops", "shift_2_downtime_minutes",
+    "standard_ct", "median_cycle_time", "min_cycle_time", "max_cycle_time",
+    "variance", "mp_id"
+])
+downtime_info = {"shift_1_totaldt": 0, "shift_2_totaldt": 0, "overall_totaldt": 0}
+daily_report_graph = go.Figure()
+bar_chart_shift_1 = go.Figure()
+bar_chart_shift_2 = go.Figure()
 
 
 grid_daily = dag.AgGrid(
@@ -152,9 +191,7 @@ rowClassRules = {
     columnSize="autoSize",
 )
 
-outliers_df, full_df = calculate_downtime_df_daily_report(46)  # Unpack the tuple
-
-df_info = pd.DataFrame(columns=full_df.columns)  # Use full_df.columns instead
+df_info = pd.DataFrame(columns=["idmonitoring", "time_input", "time_taken", "total_minutes"])
 
 columnDefs = [
             { 'field': 'idmonitoring'},
@@ -205,14 +242,11 @@ refresh_button2 = dbc.Button(
     className="mb-3",
 )
 
-df, overall, running, eff, act_cap = combined_output("2025-07-29")
-
-# fallback if df is empty
-if df is None or df.empty:
-    df = pd.DataFrame(columns=[
-        "machine_code", "normal_cycle_time", "abnormal_cycle_time", "downtime",
-        "shot_count", "change_mould", "adjustment", "productivity", "machine_capacity"
-    ])
+# fallback placeholder for initial render
+df = pd.DataFrame(columns=[
+    "machine_code", "normal_cycle_time", "abnormal_cycle_time", "downtime",
+    "shot_count", "change_mould", "adjustment", "productivity", "machine_capacity"
+])
 
 # reusable card component
 def card(title, remarks, value=0, id=None):
@@ -291,9 +325,9 @@ def create_table(dataframe):
 
 layout = html.Div([
     refresh,
-    dcc.Tabs([
+    dcc.Tabs(id="daily-tabs", value="daily-machine-stop", children=[
         
-        dcc.Tab(label='Daily Machine Stop', children=[
+        dcc.Tab(label='Daily Machine Stop', value="daily-machine-stop", children=[
             html.Div([
 
     html.Div([
@@ -384,7 +418,7 @@ layout = html.Div([
         ]),
 
 
-        dcc.Tab(label='Productivity', children=[
+        dcc.Tab(label='Productivity', value="productivity", children=[
             html.Div([
 
                 html.Div(
@@ -456,7 +490,7 @@ layout = html.Div([
 )
 def update_shift_data(selected_row, date):
     # print(selected_row)  # Debugging line to check selected rows
-    parsed_date = datetime.strptime(date, "%Y-%m-%d")
+    date = _to_date_str(date)
     if not selected_row:  # Fix: Handle empty list or None
         return go.Figure(), go.Figure()  , []
 
@@ -464,21 +498,21 @@ def update_shift_data(selected_row, date):
     mp_id = part.get('mp_id')  
 
     if mp_id is None:  # Fix: Ensure mp_id is valid
-        return go.Figure(), go.Figure()  
+        return go.Figure(), go.Figure(), []
 
     # Get hourly downtime data for the selected date
-    shift1, shift2 = hourly(mp_id, parsed_date)  # Ensure `hourly()` returns a DataFrame
+    shift1, shift2 = _cached_hourly(mp_id, date)  # Ensure `hourly()` returns a DataFrame
 
     # If there are no downtime events for the selected day, return an empty graph
     if shift1.empty or shift2.empty:
-        return go.Figure(), go.Figure()  
+        return go.Figure(), go.Figure(), []
 
 
     # Create a new bar chart for hourly downtime
     bar_chart_shift_1 = generate_bar_chart_shift(shift1, "Shift 1: Machine Stops (0800 - 2000)")
     bar_chart_shift_2 = generate_bar_chart_shift(shift2, "Shift 2: Machine Stops (2000 - 0800)")
 
-    df_select_data, downtime_information = calculate_downtime_daily_report(mp_id, date)  # Unpack the tuple
+    df_select_data, downtime_information = _cached_downtime_detail(mp_id, date)  # Unpack the tuple
 
     return bar_chart_shift_1, bar_chart_shift_2, df_select_data.to_dict("records")  # Update the grid with new data
 
@@ -495,8 +529,9 @@ def update_shift_data(selected_row, date):
 )
 def update_shift_data(date):
     if date is not None:
-        parsed_date = datetime.strptime(date, "%Y-%m-%d")
-        df_report, downtime_info = daily_report(parsed_date)
+        date = _to_date_str(date)
+        df_report, downtime_info = _cached_daily_report(date)
+        df_report = df_report.copy()
 
         daily_report_graph = generate_bar_chart(df_report, f"Report ({date})")
 
@@ -515,7 +550,7 @@ def update_shift_data(date):
             f"Shift 2 Downtime: {shift2_hrs:.0f} hrs {shift2_mins:.0f} mins"
         )        
         # mould_info = f"Mould Change Date: {}, Mould Change Time {} Adjustment Time {}"
-        mould_info, total_change_mould, total_adjustment = mould_activities(date)
+        mould_info, total_change_mould, total_adjustment = _cached_mould_activities(date)
 
         change_hrs = int(total_change_mould)
         change_mins = int((total_change_mould - change_hrs) * 60)
@@ -537,13 +572,19 @@ def update_shift_data(date):
     Output("overall-card", "children"),
     # Output("machine-card", "children"),
     Output("act-plant-card", "children"),
+    Input("daily-tabs", "value"),
     Input("date-picker", "date"),
 )
-def update_productivity_table(selected_date):
+def update_productivity_table(active_tab, selected_date):
+    if active_tab != "productivity":
+        return dash.no_update, dash.no_update, dash.no_update
+
     if not selected_date:
         return html.P("Please select a date."), "", ""
+    selected_date = _to_date_str(selected_date)
 
-    df, overall, running, eff, act_cap = combined_output(selected_date)
+    df, overall, running, eff, act_cap = _cached_combined_output(selected_date)
+    df = df.copy() if df is not None else df
 
     if df is None or df.empty:
         df = pd.DataFrame(columns=[

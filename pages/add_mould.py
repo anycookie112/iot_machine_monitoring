@@ -50,6 +50,7 @@ CUSTOMERS = [
                 {"label": "Osaka", "value": 'osaka'},
                 {"label": "SMK", "value": 'smk'},
                 {"label": "UD", "value": 'ud'},
+                {"label": "YPC", "value": 'ypc'},
 ]
 layout = dbc.Container(
     [
