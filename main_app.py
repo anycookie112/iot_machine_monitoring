@@ -1,8 +1,7 @@
 import dash
 import dash_bootstrap_components as dbc
-from dash import html, dcc
 from utils.mqtt import get_mqtt_client
-from dash import html, dcc, Input, Output, State, callback
+from dash import html, dcc, Input, Output, State
 
 mqttc = get_mqtt_client()
 app = dash.Dash(__name__,use_pages=True, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)

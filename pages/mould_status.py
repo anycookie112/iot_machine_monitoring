@@ -96,8 +96,6 @@ def update_selected_mould(selected_rows):
     prevent_initial_call=True  # Prevent execution on page load
 )
 def submit_service_record(n_clicks, mould_code, service_type, remarks):
-    db_connection_str = 'mysql+pymysql://root:UL1131@localhost/machine_monitoring'
-    
     if not n_clicks:
         return ""
     

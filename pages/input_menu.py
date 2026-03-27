@@ -1,5 +1,5 @@
 import dash_bootstrap_components as dbc
-from dash import Input, Output, html, Dash, State, dash, dcc, callback_context, callback
+from dash import Input, Output, html, State, dash, dcc, callback_context, callback
 from sqlalchemy import create_engine, text
 import pandas as pd
 import paho.mqtt.client as mqtt
@@ -12,10 +12,6 @@ from config.config import MQTT_CONFIG, DB_CONFIG
 from utils.filter_mould import get_mould_list
 from utils.overide import logging_stop_override
 from utils.mqtt import publish_message
-from utils.timer import Timer, TimerNew, toggle_machine_timer
-
-t = Timer()
-t_adjust = Timer()
 
 db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
 db_connection = create_engine(db_connection_str)
@@ -88,8 +84,6 @@ short_hand = html.Div(
     ]
 )
 
-
-dash.register_page(__name__, path='/')
 
 layout = html.Div([
 

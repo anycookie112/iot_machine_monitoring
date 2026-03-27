@@ -1,22 +1,13 @@
-
-from datetime import datetime, timedelta
-from sqlalchemy import create_engine,text
-import plotly.graph_objects as go
-import pandas as pd
 import os
 import sys
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from config.config import DB_CONFIG
-
-
 import dash
-from dash import Dash, dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
+from dash import dcc, html, Input, Output, State, callback
 from sqlalchemy import create_engine, text
 
-
-
-from dash import html, dcc, Input, Output, callback, callback_context
+from config.config import DB_CONFIG
 
 
 

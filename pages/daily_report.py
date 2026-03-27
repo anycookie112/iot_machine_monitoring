@@ -1,18 +1,11 @@
 import dash_bootstrap_components as dbc
-from dash import html, dcc, Input, Output, callback, callback_context
+from dash import html, dcc, Input, Output, callback
 import dash_ag_grid as dag
 import dash
-from sqlalchemy import create_engine
 import pandas as pd
-import os
-import datetime
-from datetime import datetime, timedelta, date
-import sys
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from datetime import datetime, timedelta
 from utils.daily import daily_report, hourly, calculate_downtime_daily_report, mould_activities, combined_output
 from utils.efficiency import  calculate_downtime_df_daily_report
-from config.config import DB_CONFIG
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -135,18 +128,18 @@ grid_daily = dag.AgGrid(
         {"field": "standard_ct", "headerName": "Standard CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
         {"field": "median_cycle_time", "headerName": "Median CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
 
-        {"field": "min_cycle_time", "headerName": "Max CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
-        {"field": "max_cycle_time", "headerName": "Min CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "min_cycle_time", "headerName": "Min CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
+        {"field": "max_cycle_time", "headerName": "Max CT (s)", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
         {"field": "variance", "headerName": "CT Variance", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 100},
         {"field": "mp_id", "headerName": "MP ID", "wrapHeaderText": True, "autoHeaderHeight": True, "width": 80},
     ],
 rowClassRules = {
     # Green shades (faster than standard)
-    "text-success fw-bold fs-4": "params.data.median_cycle_time < (params.data.standard_ct * 0.97)",  # >3% faster
     "text-success fw-bold fs-4": "params.data.median_cycle_time < (params.data.standard_ct * 0.93)",  # >7% faster
+    "text-info fw-bold fs-4": "params.data.median_cycle_time >= (params.data.standard_ct * 0.93) && params.data.median_cycle_time < (params.data.standard_ct * 0.97)",  # 3-7% faster
 
     # Warning / Danger (slower than standard)
-    "text-warning fw-bold fs-4": "params.data.median_cycle_time > (params.data.standard_ct * 1.03)",  # >3% slower
+    "text-warning fw-bold fs-4": "params.data.median_cycle_time > (params.data.standard_ct * 1.03) && params.data.median_cycle_time <= (params.data.standard_ct * 1.07)",  # 3-7% slower
     "text-danger fw-bold fs-4": "params.data.median_cycle_time > (params.data.standard_ct * 1.07)"   # >7% slower
 }
 
@@ -213,7 +206,6 @@ refresh_button2 = dbc.Button(
 )
 
 df, overall, running, eff, act_cap = combined_output("2025-07-29")
-print(f"Overall: {overall}, Running: {running}, Efficiency: {eff}, Actual Capacity: {act_cap}")
 
 # fallback if df is empty
 if df is None or df.empty:

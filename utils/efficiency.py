@@ -1,85 +1,97 @@
 import pandas as pd
-from sqlalchemy import create_engine,text
+from sqlalchemy import create_engine, text, bindparam
 from datetime import datetime
-import os
-import sys
 from config.config import DB_CONFIG
-# from utils.daily import date_calculation
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+DB_URL = (
+    f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}"
+    f"@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
+)
 
+
+def _normalize_mp_ids(mp_id):
+    if mp_id is None:
+        return []
+    if isinstance(mp_id, (list, tuple, set)):
+        ids = [int(i) for i in mp_id if i is not None]
+    else:
+        ids = [int(mp_id)]
+    return ids
 
 
 def calculate_downtime(mp_id):
-    # Connect to the database
-    db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-    # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
-    # db_connection_str = 'mysql+pymysql://root:UL1131@192.168.1.15/machine_monitoring'
+    db_engine = create_engine(DB_URL)
+    mp_ids = _normalize_mp_ids(mp_id)
 
-    db_engine = create_engine(db_connection_str)
-    
-    if not mp_id:  # Check if mp_id is None or empty
+    if not mp_ids:
         print("Error: mp_id is None or empty")
-        return pd.DataFrame(), None  # Return an empty DataFrame to prevent errors
-    
+        return pd.DataFrame(), None
 
-    query = f"""
-        SELECT DISTINCT m.*, mm.cycle_time 
+    query = (
+        text(
+            """
+        SELECT DISTINCT m.*, mm.cycle_time
         FROM monitoring AS m
         JOIN joblist AS j ON m.main_id = j.main_id
         JOIN mould_list AS mm ON j.mould_code = mm.mould_code
-        WHERE m.mp_id IN ({mp_id})
+        WHERE m.mp_id IN :mp_ids
         ORDER BY m.time_input;
         """
-    
-    df = pd.read_sql(query, con=db_engine)
-    df['time_input'] = pd.to_datetime(df['time_input'])
+        )
+        .bindparams(bindparam("mp_ids", expanding=True))
+    )
+
+    df = pd.read_sql(query, con=db_engine, params={"mp_ids": mp_ids})
+    if df.empty:
+        return pd.DataFrame(), None
+
+    df["time_input"] = pd.to_datetime(df["time_input"])
     df["date"] = df["time_input"].dt.date
     df["time"] = df["time_input"].dt.time
-    dff = df.groupby(["action"]).time_taken.sum().reset_index()
-    
-    
+    action_totals = df.groupby("action")["time_taken"].sum()
+
     filtered_df = df[(df["action"] == "abnormal_cycle") | (df["action"] == "downtime")]
-    # print(filtered_df)
     start_time = df["time_input"].min()
     end_time = df["time_input"].max()
 
-    total_stop = len(df[df["action"]== "downtime"])
+    total_stop = len(df[df["action"] == "downtime"])
     total_shots = len(df[df["action"]== "normal_cycle"])
-    total_running = dff['time_taken'].sum()
+    total_running = action_totals.sum()
     median_cycle_time = round(df["time_taken"].median(), 2)
 
-    cycle_time = df['cycle_time'].values[0]
-    # print(cycle_time)
+    cycle_time = float(df["cycle_time"].iloc[0]) if not df["cycle_time"].isna().all() else 0
     ideal_time = total_shots * cycle_time
-    downtime = dff['time_taken'].values[1]
-    # print(df)
+    downtime = float(action_totals.get("downtime", 0))
 
-    efficiency = ((total_shots * cycle_time) / (total_running)) * 100
+    efficiency = ((total_shots * cycle_time) / total_running) * 100 if total_running else 0
 
-    # return { "production_time": total_running, "ideal_time":ideal_time, "downtime": downtime, "efficiency": efficiency , "total_times_stoped": total_stop, "total_shots": total_shots}
     return filtered_df, { "production_time": total_running, "ideal_time":ideal_time, "downtime": downtime, "efficiency": efficiency , "total_times_stoped": total_stop, "median_cycle_time": median_cycle_time, "total_shots": total_shots,"start_time": start_time,"end_time": end_time}
 
 
 def calculate_downtime_df(mp_id):
-    # Connect to the database
-    db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-    # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
-    # db_connection_str = 'mysql+pymysql://root:UL1131@192.168.1.15/machine_monitoring'
-    db_engine = create_engine(db_connection_str)
+    db_engine = create_engine(DB_URL)
+    mp_ids = _normalize_mp_ids(mp_id)
+    if not mp_ids:
+        return pd.DataFrame(), pd.DataFrame()
 
-
-    query = f"""
-        SELECT DISTINCT m.*, mm.cycle_time 
+    query = (
+        text(
+            """
+        SELECT DISTINCT m.*, mm.cycle_time
         FROM monitoring AS m
         JOIN joblist AS j ON m.main_id = j.main_id
         JOIN mould_list AS mm ON j.mould_code = mm.mould_code
-        WHERE m.mp_id IN ({mp_id})
+        WHERE m.mp_id IN :mp_ids
         ORDER BY m.time_input;
-
         """
-    
-    df = pd.read_sql(query, con=db_engine)
+        )
+        .bindparams(bindparam("mp_ids", expanding=True))
+    )
+
+    df = pd.read_sql(query, con=db_engine, params={"mp_ids": mp_ids})
+    if df.empty:
+        return pd.DataFrame(), df
+
     df['time_input'] = pd.to_datetime(df['time_input'])
     df["date"] = df["time_input"].dt.date
     df["time"] = df["time_input"].dt.time
@@ -96,50 +108,60 @@ def calculate_downtime_df(mp_id):
 
 def update_sql(mp_id, complete = False):
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-    # db_connection_str = 'mysql+pymysql://admin:UL1131@192.168.1.17/machine_monitoring'
-    connection = create_engine(db_connection_str).raw_connection()
-    with connection.cursor() as cursor:
-        dummy, information = calculate_downtime(mp_id)
-        # print(information["ideal_time"])
-        if complete == False:
-            sql_update = "update mass_production set total_production_time = %s, downtime = %s, efficiency = %s where mp_id = %s "
-            cursor.execute(sql_update, (information["production_time"], information["downtime"], information["efficiency"], mp_id,))
-            connection.commit()
-            """
-            so in the mass production table, get the mpid 
-            update mass_production set total_production_time = %s, total_down_time = %s, efficiency = %s
-            where mp_id = %s 
-            """
-        else:
-            sql_update = "update mass_production set total_production_time = %s, downtime = %s, efficiency = %s, status = %s, time_completed = %s where mp_id = %s "
-            cursor.execute(sql_update, (information["production_time"], information["downtime"], information["efficiency"], "completed", current_time, mp_id,))
-            connection.commit()
-            """
-            so in the mass production table, get the mpid 
-            update mass_production set total_production_time = %s, total_down_time = %s, efficiency = %s
-            where mp_id = %s 
-            """
+    connection = create_engine(DB_URL).raw_connection()
+    try:
+        with connection.cursor() as cursor:
+            dummy, information = calculate_downtime(mp_id)
+            if not information:
+                return
+            # print(information["ideal_time"])
+            if complete == False:
+                sql_update = "update mass_production set total_production_time = %s, downtime = %s, efficiency = %s where mp_id = %s "
+                cursor.execute(sql_update, (information["production_time"], information["downtime"], information["efficiency"], mp_id,))
+                connection.commit()
+                """
+                so in the mass production table, get the mpid 
+                update mass_production set total_production_time = %s, total_down_time = %s, efficiency = %s
+                where mp_id = %s 
+                """
+            else:
+                sql_update = "update mass_production set total_production_time = %s, downtime = %s, efficiency = %s, status = %s, time_completed = %s where mp_id = %s "
+                cursor.execute(sql_update, (information["production_time"], information["downtime"], information["efficiency"], "completed", current_time, mp_id,))
+                connection.commit()
+                """
+                so in the mass production table, get the mpid 
+                update mass_production set total_production_time = %s, total_down_time = %s, efficiency = %s
+                where mp_id = %s 
+                """
+    finally:
+        connection.close()
 
 
 def calculate_downtime_df_daily_report(mp_id, date= datetime.now().date()):
-    # Connect to the database
-    db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-    db_engine = create_engine(db_connection_str)
+    db_engine = create_engine(DB_URL)
+    mp_ids = _normalize_mp_ids(mp_id)
+    if not mp_ids:
+        return pd.DataFrame(), pd.DataFrame()
 
-    # SQL query with an additional WHERE clause for the date
-    query = f"""
-        SELECT DISTINCT m.*, mm.cycle_time 
+    query = (
+        text(
+            """
+        SELECT DISTINCT m.*, mm.cycle_time
         FROM monitoring AS m
         JOIN joblist AS j ON m.main_id = j.main_id
         JOIN mould_list AS mm ON j.mould_code = mm.mould_code
-        WHERE m.mp_id IN ({mp_id})
-        AND DATE(m.time_input) = '{date}'
+        WHERE m.mp_id IN :mp_ids
+        AND DATE(m.time_input) = :date
         ORDER BY m.time_input;
     """
+        )
+        .bindparams(bindparam("mp_ids", expanding=True))
+    )
     
-    # Execute the query and process the DataFrame
-    df = pd.read_sql(query, con=db_engine)
+    df = pd.read_sql(query, con=db_engine, params={"mp_ids": mp_ids, "date": date})
+    if df.empty:
+        return pd.DataFrame(), df
+
     df['time_input'] = pd.to_datetime(df['time_input'])
     df["date"] = df["time_input"].dt.date
     df["time"] = df["time_input"].dt.time
