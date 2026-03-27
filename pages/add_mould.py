@@ -6,12 +6,17 @@ import dash
 import dash_bootstrap_components as dbc
 from dash import dcc, html, Input, Output, State, callback
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from config.config import DB_CONFIG
 
 
 
-engine = create_engine(f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}")
+engine = create_engine(
+    f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}",
+    pool_pre_ping=True,
+    pool_recycle=3600,
+)
 
 # df = pd.read_sql(f'''
 #     SELECT * FROM machine_list
@@ -124,6 +129,27 @@ layout = dbc.Container(
     prevent_initial_call=True
 )
 def insert_mould(n_clicks, mould_code, model_number, part_name, part_code, standard_ct, customer):
+    required_fields = {
+        "Mould Code": mould_code,
+        "Model Number": model_number,
+        "Part Name": part_name,
+        "Part Code": part_code,
+        "Standard CT": standard_ct,
+        "Customer": customer,
+    }
+    missing = [label for label, value in required_fields.items() if value in (None, "")]
+    if missing:
+        return (
+            dbc.Alert(f"Please fill required field(s): {', '.join(missing)}", color="warning"),
+            mould_code, model_number, part_name, part_code, standard_ct, customer
+        )
+
+    if standard_ct is not None and float(standard_ct) <= 0:
+        return (
+            dbc.Alert("Standard CT must be greater than 0.", color="warning"),
+            mould_code, model_number, part_name, part_code, standard_ct, customer
+        )
+
     try:
         with engine.begin() as conn:
             conn.execute(
@@ -144,7 +170,12 @@ def insert_mould(n_clicks, mould_code, model_number, part_name, part_code, stand
             dbc.Alert(f"Mould {mould_code} inserted successfully!", color="success"),
             None, None, None, None, None, None
         )
-    except Exception as e:
+    except IntegrityError:
+        return (
+            dbc.Alert(f"Mould {mould_code} already exists or violates a DB constraint.", color="danger"),
+            mould_code, model_number, part_name, part_code, standard_ct, customer
+        )
+    except SQLAlchemyError as e:
         return (dbc.Alert(f"Error: {e}", color="danger"),
                 mould_code, model_number, part_name, part_code, standard_ct, customer)
 
