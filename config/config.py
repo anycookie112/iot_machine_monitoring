@@ -1,30 +1,14 @@
-# DB_CONFIG = {
-#     "username": "root",
-#     "password": "UL1131",
-#     "host": "localhost",
-#     "database": "monitoring_2025"
-# }
-
-# MQTT_CONFIG = {
-#     "mqtt_broker": "192.168.56.1",
-#     "mqtt_port": 1883
-# }
-
-# MQTT_CONFIG = {
-#     "mqtt_broker": "172.28.240.1",
-#     "mqtt_port": 1883
-# }
-# Hotspot (need to turn on the 4g setting)
+import os
 
 
 DB_CONFIG = {
-    "username": "admin",
-    "password": "UL1131",
-    "host": "192.168.1.17",
-    "database": "machine_monitoring"
+    "username": os.getenv("MM_DB_USERNAME", "admin"),
+    "password": os.getenv("MM_DB_PASSWORD", "UL1131"),
+    "host": os.getenv("MM_DB_HOST", "192.168.1.17"),
+    "database": os.getenv("MM_DB_NAME", "machine_monitoring"),
 }
 
 MQTT_CONFIG = {
-    "mqtt_broker": "192.168.1.17",
-    "mqtt_port": 1883
+    "mqtt_broker": os.getenv("MM_MQTT_BROKER", "192.168.1.17"),
+    "mqtt_port": int(os.getenv("MM_MQTT_PORT", "1883")),
 }

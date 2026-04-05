@@ -29,6 +29,18 @@ def _to_date_str(date_value):
     return str(date_value)
 
 
+def _is_today(date_str):
+    return _to_date_str(datetime.now().date()) == _to_date_str(date_str)
+
+
+def _clear_daily_caches():
+    _cached_daily_report.cache_clear()
+    _cached_hourly.cache_clear()
+    _cached_downtime_detail.cache_clear()
+    _cached_mould_activities.cache_clear()
+    _cached_combined_output.cache_clear()
+
+
 @lru_cache(maxsize=64)
 def _cached_daily_report(date_str):
     parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
@@ -222,9 +234,7 @@ grid_information_bar = dag.AgGrid(
 
 refresh = dcc.Interval(
     id=f"refresh-interval-{page}",
-    interval= 3600 * 250,  # 15 minutes
-    # interval=15 * 1000,  # 5 seconds
-
+    interval=60 * 1000,  # 1 minute
     n_intervals=0,
 )
 
@@ -528,7 +538,7 @@ def update_shift_data(selected_row, date):
     Output('ma_info', 'children'),
     Input("date-picker", 'date'),  
 )
-def update_shift_data(date):
+def update_daily_report_data(date):
     if date is not None:
         date = _to_date_str(date)
         df_report, downtime_info = _cached_daily_report(date)
@@ -564,8 +574,8 @@ def update_shift_data(date):
             f"Total Adjustment Time: {adjust_hrs:.0f} hrs {adjust_mins:.0f} mins"
 )
         # ma_info =f"Total Change Mould Time: {total_change_mould} Hours | Total Adjustment Time: {total_adjustment} Hours",
-        return df_report.to_dict("records"), daily_report_graph, dt_info, date, mould_info.to_dict("records"), ma_info  # Update the grid with new data
-    return []
+        return df_report.to_dict("records"), daily_report_graph, dt_info, date, mould_info.to_dict("records"), ma_info
+    return [], go.Figure(), "", None, [], ""
     
 
 @callback(
@@ -575,8 +585,9 @@ def update_shift_data(date):
     Output("act-plant-card", "children"),
     Input("daily-tabs", "value"),
     Input("date-picker", "date"),
+    Input(f"refresh-interval-{page}", "n_intervals"),
 )
-def update_productivity_table(active_tab, selected_date):
+def update_productivity_table(active_tab, selected_date, _n_intervals):
     if active_tab != "productivity":
         return dash.no_update, dash.no_update, dash.no_update
 
@@ -584,7 +595,10 @@ def update_productivity_table(active_tab, selected_date):
         return html.P("Please select a date."), "0%", "0%"
     selected_date = _to_date_str(selected_date)
 
-    df, actual_productivity, planned_productivity, _overall_efficiency = _cached_combined_output(selected_date)
+    if _is_today(selected_date):
+        df, actual_productivity, planned_productivity, _overall_efficiency = combined_output(selected_date)
+    else:
+        df, actual_productivity, planned_productivity, _overall_efficiency = _cached_combined_output(selected_date)
     df = df.copy() if df is not None else df
 
     if df is None or df.empty:
@@ -617,6 +631,8 @@ def update_date(btn1_clicks, btn2_clicks):
         return datetime.now().date()
     
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    _clear_daily_caches()
 
     if triggered_id == "refresh-button-2":
         return (datetime.now() - timedelta(days=1)).date()

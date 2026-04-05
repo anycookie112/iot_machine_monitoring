@@ -687,6 +687,7 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
 
     query = text("""
     SELECT 
+        monitoring.idmonitoring,
         machine_code, 
         joblist.mould_code,
         part_name,
@@ -717,36 +718,79 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
             "end_time": end_time
         })
 
+    activity_columns = [
+        'machine_code',
+        'mould_code',
+        'part_name',
+        'main_id',
+        'base_action',
+        'start_time',
+        'end_time',
+        'duration_hr',
+        'remarks',
+    ]
+
+    if df.empty:
+        return pd.DataFrame(columns=activity_columns), 0.0, 0.0
+
     # Convert to datetime
+    df = df.drop_duplicates(subset=['idmonitoring']).copy()
     df['time_input'] = pd.to_datetime(df['time_input'])
 
     # Normalize action
     df['base_action'] = df['action'].str.replace(r' (start|end)$', '', regex=True)
+    df = df.sort_values(['main_id', 'base_action', 'time_input', 'idmonitoring'])
 
-    # Group start times
-    start_df = (
-        df[df['action'].str.endswith('start')]
-        .groupby(['main_id', 'base_action', 'machine_code', 'mould_code'], as_index=False)
-        .agg(start_time=('time_input', 'min'))
-    )
+    paired_rows = []
 
-    # Group end times and handle part_name/remarks
-    end_df = (
-        df[df['action'].str.endswith('end')]
-        .groupby(['main_id', 'base_action'], as_index=False)
-        .agg(
-            end_time=('time_input', 'max'),
-            remarks=('remarks', lambda x: ', '.join(sorted(set(filter(None, x))))),
-            part_name=('part_name', lambda x: ', '.join(sorted(set(filter(None, x)))))
-        )
-    )
+    for (_, _), group in df.groupby(['main_id', 'base_action'], sort=False):
+        open_starts = []
 
-    # Merge safely (one-to-one now)
-    merged = pd.merge(start_df, end_df, on=['main_id', 'base_action'], how='inner')
+        for row in group.itertuples(index=False):
+            if row.action.endswith('start'):
+                open_starts.append(row)
+                continue
 
-    # Compute duration
-    merged['duration'] = merged['end_time'] - merged['start_time']
-    merged['duration_hr'] = (merged['duration'].dt.total_seconds() / 3600).round(2)
+            if not row.action.endswith('end'):
+                continue
+
+            duration_seconds = float(row.time_taken) if pd.notna(row.time_taken) and row.time_taken > 0 else None
+
+            if open_starts:
+                start_row = open_starts.pop(0)
+                start_time = start_row.time_input
+                machine_code = start_row.machine_code
+                mould_code = start_row.mould_code
+                part_name = start_row.part_name if pd.notna(start_row.part_name) else row.part_name
+            elif duration_seconds is not None:
+                start_time = row.time_input - timedelta(seconds=duration_seconds)
+                machine_code = row.machine_code
+                mould_code = row.mould_code
+                part_name = row.part_name
+            else:
+                continue
+
+            if duration_seconds is None:
+                duration_seconds = max((row.time_input - start_time).total_seconds(), 0.0)
+
+            paired_rows.append(
+                {
+                    'machine_code': machine_code,
+                    'mould_code': mould_code,
+                    'part_name': part_name,
+                    'main_id': row.main_id,
+                    'base_action': row.base_action,
+                    'start_time': start_time,
+                    'end_time': row.time_input,
+                    'duration_hr': round(duration_seconds / 3600, 2),
+                    'remarks': row.remarks,
+                }
+            )
+
+    if not paired_rows:
+        return pd.DataFrame(columns=activity_columns), 0.0, 0.0
+
+    merged = pd.DataFrame(paired_rows, columns=activity_columns)
 
     # Totals
     change_mould_total = merged[merged['base_action'] == 'change mould']['duration_hr'].sum()
@@ -767,37 +811,37 @@ def efficiency_sql_only(date=datetime.now().replace(hour=8, minute=0, second=0, 
     
     start_time, _, end_time = date_calculation(date)
     query = text("""
-
-        SELECT 
-            mass_production.machine_code,
-            
-            SUM(monitoring.time_taken)/3600 AS total_time_taken,
-
-            SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN monitoring.time_taken ELSE 0 END) /3600 AS normal_cycle_time,
-            SUM(CASE WHEN monitoring.action = 'abnormal_cycle' THEN monitoring.time_taken ELSE 0 END)/3600 AS abnormal_cycle_time,
-            SUM(CASE WHEN monitoring.action = 'downtime' THEN monitoring.time_taken ELSE 0 END)/3600 AS downtime_time,
-
-            SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN 1 ELSE 0 END) AS shot_count,
-
-            MIN(monitoring.time_input) AS first_input_time,
-            MAX(monitoring.time_input) AS last_input_time,
-            TIMEDIFF(MAX(monitoring.time_input), MIN(monitoring.time_input)) AS total_running_time,
-
+        SELECT
+            activity.machine_code,
+            SUM(activity.time_taken) / 3600 AS total_time_taken,
+            SUM(CASE WHEN activity.action = 'normal_cycle' THEN activity.time_taken ELSE 0 END) / 3600 AS normal_cycle_time,
+            SUM(CASE WHEN activity.action = 'abnormal_cycle' THEN activity.time_taken ELSE 0 END) / 3600 AS abnormal_cycle_time,
+            SUM(CASE WHEN activity.action = 'downtime' THEN activity.time_taken ELSE 0 END) / 3600 AS downtime_time,
+            SUM(CASE WHEN activity.action = 'normal_cycle' THEN 1 ELSE 0 END) AS shot_count,
+            MIN(activity.time_input) AS first_input_time,
+            MAX(activity.time_input) AS last_input_time,
+            TIMEDIFF(MAX(activity.time_input), MIN(activity.time_input)) AS total_running_time,
             ROUND(
-                SUM(CASE WHEN monitoring.action = 'normal_cycle' THEN monitoring.time_taken ELSE 0 END) / 
-                SUM(monitoring.time_taken) * 100, 
+                COALESCE(
+                    SUM(CASE WHEN activity.action = 'normal_cycle' THEN activity.time_taken ELSE 0 END)
+                    / NULLIF(SUM(activity.time_taken), 0) * 100,
+                    0
+                ),
                 2
             ) AS efficiency_percent
-
-
-
-        FROM 
-            mass_production
-        INNER JOIN monitoring ON monitoring.mp_id = mass_production.mp_id
-        WHERE 
-            monitoring.time_input BETWEEN :start_time AND :end_time
-        GROUP BY 
-            mass_production.machine_code;
+        FROM (
+            SELECT
+                COALESCE(mp.machine_code, j.machine_code) AS machine_code,
+                monitoring.action,
+                monitoring.time_taken,
+                monitoring.time_input
+            FROM monitoring
+            LEFT JOIN mass_production AS mp ON monitoring.mp_id = mp.mp_id
+            LEFT JOIN joblist AS j ON monitoring.main_id = j.main_id
+            WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+        ) AS activity
+        WHERE activity.machine_code IS NOT NULL
+        GROUP BY activity.machine_code;
         """)
 
         # Run query and load into a DataFrame

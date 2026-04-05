@@ -16,6 +16,63 @@ from utils.mqtt import publish_message
 db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
 db_connection = create_engine(db_connection_str)
 
+
+def _get_machine_status(cursor, machine_id):
+    cursor.execute(
+        """
+        SELECT machine_status
+        FROM machine_list
+        WHERE machine_code = %s
+        """,
+        (str(machine_id),),
+    )
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+
+def _get_latest_main_id(cursor, machine_id):
+    cursor.execute(
+        """
+        SELECT main_id
+        FROM joblist
+        WHERE machine_code = %s
+        ORDER BY main_id DESC
+        LIMIT 1
+        """,
+        (str(machine_id),),
+    )
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+
+def _get_latest_action_start(cursor, main_id, action):
+    cursor.execute(
+        """
+        SELECT time_input
+        FROM monitoring
+        WHERE main_id = %s
+          AND action = %s
+        ORDER BY time_input DESC, idmonitoring DESC
+        LIMIT 1
+        """,
+        (str(main_id), action),
+    )
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+
+def _get_elapsed_seconds(cursor, main_id, action):
+    start_time = _get_latest_action_start(cursor, main_id, action)
+    if not start_time:
+        return 0
+
+    cursor.execute(
+        "SELECT GREATEST(TIMESTAMPDIFF(SECOND, %s, NOW()), 0)",
+        (start_time,),
+    )
+    result = cursor.fetchone()
+    return int(result[0]) if result and result[0] is not None else 0
+
 df = pd.read_sql(f'''
     SELECT * FROM machine_list
 ''', con=db_connection)
@@ -60,6 +117,7 @@ inline_checklist = html.Div(
                 {"label": "Osaka", "value": 'osaka'},
                 {"label": "SMK", "value": 'smk'},
                 {"label": "UD", "value": 'ud'},
+                {"label": "YPC", "value": 'ypc'},
             ],
             value=[],
             id="checklist-inline-input",
@@ -323,6 +381,7 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
     # Identify which input triggered the callback
     mqtt_machine = f"machines/{machine_id}"
     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0] if callback_context.triggered else None
+    connection = None
 
     # Handle "UMS" button click
     if triggered_id == "ums":
@@ -342,6 +401,10 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
             # Database update
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
+                current_status = _get_machine_status(cursor, machine_id)
+                if current_status == "change mould in progress":
+                    return False
+
                 sql = "UPDATE machine_list SET mould_id = %s, machine_status = 'change mould in progress' WHERE machine_code = %s"
                 cursor.execute(sql, (str(mould_id), str(machine_id)))
 
@@ -364,7 +427,8 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
         except Exception as e:
             print(f"Error updating database: {e}")
         finally:
-            connection.close()
+            if connection:
+                connection.close()
         return False  # Close the modal after successful action
 
     # Default case: No button was clicked
@@ -381,6 +445,7 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
 )
 def change_mould_end(ume, yes, no, name, is_open, machine_id):
     triggered = callback_context.triggered
+    connection = None
 
     # Handle first page load (no triggers)
     if not triggered or triggered[0]["prop_id"] == ".":
@@ -393,6 +458,9 @@ def change_mould_end(ume, yes, no, name, is_open, machine_id):
     if triggered_id == "ume":
         return True
 
+    if triggered_id == "no-1":
+        return False
+
     # Keep modal open if name is missing
     if not name or not name.strip():
         return True
@@ -402,6 +470,16 @@ def change_mould_end(ume, yes, no, name, is_open, machine_id):
         try:
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
+                current_status = _get_machine_status(cursor, machine_id)
+                if current_status != "change mould in progress":
+                    return False
+
+                main_id = _get_latest_main_id(cursor, machine_id)
+                if main_id is None:
+                    return False
+
+                elapsed_seconds = _get_elapsed_seconds(cursor, main_id, "change mould start")
+
                 # Update machine status
                 sql_update = """
                 UPDATE machine_list 
@@ -409,40 +487,24 @@ def change_mould_end(ume, yes, no, name, is_open, machine_id):
                 WHERE machine_code = %s
                 """
                 cursor.execute(sql_update, (machine_id,))
-                
-                # Get most recent joblist entry
-                sql_select = """
-                SELECT main_id
-                FROM joblist
-                WHERE machine_code = %s
-                ORDER BY main_id DESC
-                LIMIT 1
-                """
-                cursor.execute(sql_select, (str(machine_id),))
-                result = cursor.fetchone()
 
-                if result:
-                    main_id = result[0]
-                    sql_insert = """
-                    INSERT INTO monitoring (main_id, action, time_taken, time_input, remarks)
-                    VALUES (%s, "change mould end", %s, NOW(), %s)
-                    """
-                    cursor.execute(sql_insert, (str(main_id), 0, name))
-                    connection.commit()
-                    
-                    if mqtt_machine:
-                        message = json.dumps({"command": "ume"})
-                        publish_message(mqtt_machine, message, qos=2)
+                sql_insert = """
+                INSERT INTO monitoring (main_id, action, time_taken, time_input, remarks)
+                VALUES (%s, "change mould end", %s, NOW(), %s)
+                """
+                cursor.execute(sql_insert, (str(main_id), elapsed_seconds, name))
+                connection.commit()
+
+                if mqtt_machine:
+                    message = json.dumps({"command": "ume"})
+                    publish_message(mqtt_machine, message, qos=2)
 
             connection.commit()
         except Exception as e:
             print(f"Error occurred: {e}")
         finally:
-            connection.close()
-        return False
-
-    # No button: close modal
-    if triggered_id == "no-1":
+            if connection:
+                connection.close()
         return False
 
     # Otherwise, keep current state
@@ -477,6 +539,12 @@ def adjustment(qas, alert, machine_id):
         with connection.cursor() as cursor:
             print("Connected to DB")
 
+            current_status = _get_machine_status(cursor, machine_id)
+            if current_status == "adjustment/qa in progress":
+                return True
+            if current_status != "active mould not running":
+                return dash.no_update
+
             # Update machine_list
             sql = """
             UPDATE machine_list 
@@ -486,23 +554,12 @@ def adjustment(qas, alert, machine_id):
             cursor.execute(sql, (str(machine_id),))
             connection.commit()
 
-            # Get latest main_id
-            sql_select = """
-            SELECT main_id
-            FROM joblist
-            WHERE machine_code = %s
-            ORDER BY main_id DESC
-            LIMIT 1
-            """
-            cursor.execute(sql_select, (str(machine_id),))
-            result = cursor.fetchone()
-            print("Fetched main_id:", result)
+            main_id = _get_latest_main_id(cursor, machine_id)
+            print("Fetched main_id:", main_id)
 
-            if not result:
+            if not main_id:
                 print(f"No joblist entry found for machine_id={machine_id}")
                 return dash.no_update
-
-            main_id = result[0]
 
             sql_insert = """
             INSERT INTO monitoring (main_id, action, time_taken, time_input)
@@ -538,6 +595,7 @@ def adjustment(qas, alert, machine_id):
 def adjustment_end(ume, yes, no, name, is_open, machine_id):
     mqtt_machine = f"machines/{machine_id}"
     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
+    connection = None
 
     # When "ume" is clicked, open the modal
     if triggered_id == "qae":
@@ -552,6 +610,16 @@ def adjustment_end(ume, yes, no, name, is_open, machine_id):
         try:
             connection = create_engine(db_connection_str).raw_connection()
             with connection.cursor() as cursor:
+                current_status = _get_machine_status(cursor, machine_id)
+                if current_status != "adjustment/qa in progress":
+                    return False
+
+                main_id = _get_latest_main_id(cursor, machine_id)
+                if main_id is None:
+                    return False
+
+                elapsed_seconds = _get_elapsed_seconds(cursor, main_id, "adjustment start")
+
                 sql = """
                 UPDATE machine_list 
                 SET machine_status = 'active mould not running'
@@ -559,38 +627,24 @@ def adjustment_end(ume, yes, no, name, is_open, machine_id):
                 """
                 cursor.execute(sql, (str(machine_id),))
                 connection.commit()
-            
-            # Fetch the most recent entry from joblist
-                sql_select = """
-                SELECT main_id
-                FROM joblist
-                WHERE machine_code = %s
-                ORDER BY main_id DESC
-                LIMIT 1
+
+                sql_insert = """
+                INSERT INTO monitoring (main_id, action, time_taken, time_input, remarks)
+                VALUES (%s, "adjustment end", %s, NOW(), %s)
                 """
-                cursor.execute(sql_select, (str(machine_id),))
-                result = cursor.fetchone()
+                cursor.execute(sql_insert, (str(main_id), elapsed_seconds, name,))
+                connection.commit()
 
-                if result:
-                    main_id = result[0]
-                    # elasped_time = toggle_machine_timer(machine_id)
-
-                    sql_insert = """
-                    INSERT INTO monitoring (main_id, action, time_taken, time_input, remarks)
-                    VALUES (%s, "adjustment end", %s, NOW(), %s)
-                    """
-                    cursor.execute(sql_insert, (str(main_id), 0, name,))
-                    connection.commit()
-
-                    message = json.dumps({"command": "qae"})
-                    publish_message(mqtt_machine, message, qos=2)  
+                message = json.dumps({"command": "qae"})
+                publish_message(mqtt_machine, message, qos=2)
 
 
 
         except Exception as e:
             print(f"Error updating database: {e}")
         finally:
-            connection.close()
+            if connection:
+                connection.close()
         return False  # Close modal after action
 
     # When "no" is clicked, just close the modal without any action

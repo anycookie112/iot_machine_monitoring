@@ -2,15 +2,15 @@ from airflow.decorators import dag, task
 from sqlalchemy import create_engine, text
 from datetime import datetime, timedelta
 import requests
-import json
+import os
 
-ip = "192.168.5.38"
+ip = os.getenv("MM_ESP_IP", "192.168.5.38")
 
 DB_CONFIG = {
-    "username": "root",
-    "password": "UL1131",
-    "host": "192.168.5.31",
-    "database": "machine_monitoring"
+    "username": os.getenv("MM_DB_USERNAME", "root"),
+    "password": os.getenv("MM_DB_PASSWORD", "UL1131"),
+    "host": os.getenv("MM_DB_HOST", "192.168.5.31"),
+    "database": os.getenv("MM_DB_NAME", "machine_monitoring")
 }
 
 @dag(

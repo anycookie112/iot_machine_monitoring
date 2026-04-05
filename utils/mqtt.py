@@ -19,6 +19,27 @@ mqttc = None  # Client object
 mqtt_running = False  # Ensure MQTT starts only once
 mqtt_lock = threading.Lock()  # Prevent race conditions
 
+
+def update_machine_esp_status(machine_id, status):
+    if not machine_id:
+        return
+
+    try:
+        with db_connection.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    UPDATE machine_list
+                    SET esp_status = :status
+                    WHERE machine_code = :machine_code
+                    """
+                ),
+                {"status": status, "machine_code": machine_id},
+            )
+    except Exception as e:
+        print(f"[ERROR] Failed to update esp_status for {machine_id}: {e}")
+
+
 #  MQTT Callbacks
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
@@ -57,14 +78,10 @@ def on_message(client, userdata, msg):
                 mqtt_machine = f"machines/{machine_id}"
 
                 if status and machine_id:
+                    update_machine_esp_status(machine_id, status)
                     connection = create_engine(db_connection_str).raw_connection()
                     try:
                         with connection.cursor() as cursor:
-                            # Always update esp_status
-                            sql = "UPDATE machine_list SET esp_status = %s WHERE machine_code = %s"
-                            cursor.execute(sql, (status, machine_id))
-                            connection.commit()
-
                             # If disconnected, log error
                             if status == "disconnected":
                                 sql_logging = """
@@ -217,6 +234,7 @@ def on_message(client, userdata, msg):
                 message_data = json.loads(payload)  # Parse JSON
                 machine_id = message_data.get("machine_id")  # Correct key name
                 mqtt_machine = f"machines/{machine_id}"
+                update_machine_esp_status(machine_id, "connected")
 
                 try:
                     with db_connection.connect() as connection:
@@ -305,6 +323,8 @@ def on_message(client, userdata, msg):
         elif msg.topic.startswith("machine/cycle_time"):
             message_data = json.loads(payload)
             mp_id = message_data.get("mp_id")
+            machine_id = message_data.get("machineid")
+            update_machine_esp_status(machine_id, "connected")
             # print(mp_id)
             update_sql(mp_id)
         
