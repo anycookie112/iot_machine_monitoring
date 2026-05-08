@@ -116,6 +116,10 @@ STOP_ACTIONS = {"abnormal_cycle", "downtime"}
 PRODUCTION_ACTIONS = ("normal_cycle", "abnormal_cycle", "downtime")
 MANUAL_STOP_BOUNDARY_ACTIONS = {"change mould start", "adjustment start"}
 
+# Firmware in ESP_LOG_TXT_WITH_TASK_IMPROVED stops logging when downtime exceeds
+# this threshold; orphan clusters can never realistically exceed it.
+MAX_OPEN_CLUSTER_HOURS = 5
+
 
 def _shift_name(timestamp_value):
     return "Shift 1" if 8 <= timestamp_value.hour < 20 else "Shift 2"
@@ -207,6 +211,7 @@ def _build_stop_clusters(events_df, window_end, manual_events_df=None):
         "mp_id",
         "action",
         "time_input",
+        "time_taken",
         "machine_code",
         "mould_id",
         "event_source",
@@ -225,6 +230,8 @@ def _build_stop_clusters(events_df, window_end, manual_events_df=None):
     ).reset_index(drop=True)
 
     clusters = []
+    window_end_ts = pd.Timestamp(window_end)
+    window_start_ts = window_end_ts - pd.Timedelta(days=1)
 
     for machine_code, group in event_stream.groupby("machine_code", sort=False):
         open_cluster = None
@@ -232,8 +239,15 @@ def _build_stop_clusters(events_df, window_end, manual_events_df=None):
         for row in group.itertuples(index=False):
             action = row.action
             event_time = pd.Timestamp(row.time_input)
+            time_taken_seconds = (
+                float(row.time_taken)
+                if pd.notna(getattr(row, "time_taken", None))
+                else 0.0
+            )
 
-            if action in STOP_ACTIONS:
+            if action == "abnormal_cycle":
+                # Auto -> manual transition; opens a stop interval that a later
+                # `downtime` (or boundary/normal) event will close.
                 if open_cluster is None:
                     open_cluster = {
                         "mp_id": getattr(row, "mp_id", None),
@@ -243,6 +257,38 @@ def _build_stop_clusters(events_df, window_end, manual_events_df=None):
                         "start_action": action,
                         "cluster_start_time": event_time,
                     }
+                continue
+
+            if action == "downtime":
+                # Firmware publishes `downtime` when auto-mode resumes; its
+                # time_taken is the duration of the just-ended stop period.
+                period_start = event_time - pd.Timedelta(seconds=time_taken_seconds)
+                period_start = max(period_start, window_start_ts)
+
+                if open_cluster is not None:
+                    cluster_start = min(
+                        open_cluster["cluster_start_time"], period_start
+                    )
+                    open_cluster["cluster_start_time"] = cluster_start
+                    open_cluster["cluster_end_time"] = event_time
+                    open_cluster["end_id"] = getattr(row, "idmonitoring", None)
+                    open_cluster["closed_by"] = "downtime"
+                    clusters.append(open_cluster)
+                    open_cluster = None
+                elif event_time > period_start:
+                    clusters.append(
+                        {
+                            "mp_id": getattr(row, "mp_id", None),
+                            "machine_code": machine_code,
+                            "mould_id": getattr(row, "mould_id", None),
+                            "start_id": getattr(row, "idmonitoring", None),
+                            "start_action": "downtime",
+                            "cluster_start_time": period_start,
+                            "cluster_end_time": event_time,
+                            "end_id": getattr(row, "idmonitoring", None),
+                            "closed_by": "downtime",
+                        }
+                    )
                 continue
 
             if (
@@ -255,9 +301,15 @@ def _build_stop_clusters(events_df, window_end, manual_events_df=None):
                 open_cluster = None
 
         if open_cluster is not None:
-            open_cluster["cluster_end_time"] = pd.Timestamp(window_end)
+            cap = open_cluster["cluster_start_time"] + pd.Timedelta(
+                hours=MAX_OPEN_CLUSTER_HOURS
+            )
+            cap = min(cap, window_end_ts)
+            open_cluster["cluster_end_time"] = cap
             open_cluster["end_id"] = None
-            open_cluster["closed_by"] = "window_end"
+            open_cluster["closed_by"] = (
+                "firmware_5h_cap" if cap < window_end_ts else "window_end"
+            )
             clusters.append(open_cluster)
 
     cluster_df = pd.DataFrame(
