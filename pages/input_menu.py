@@ -1,20 +1,13 @@
 import dash_bootstrap_components as dbc
 from dash import Input, Output, html, State, dash, dcc, callback_context, callback
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 import pandas as pd
-import paho.mqtt.client as mqtt
 import json
-import threading
-import time
 import dash
-from utils.efficiency import update_sql
-from config.config import MQTT_CONFIG, DB_CONFIG
-from utils.filter_mould import get_mould_list
-from utils.overide import logging_stop_override
-from utils.mqtt import publish_message
 
-db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-db_connection = create_engine(db_connection_str)
+from utils.db import get_db_engine, get_raw_connection
+from utils.filter_mould import get_customer_list, get_mould_list
+from utils.mqtt import publish_message
 
 
 def _get_machine_status(cursor, machine_id):
@@ -45,6 +38,22 @@ def _get_latest_main_id(cursor, machine_id):
     return result[0] if result else None
 
 
+def _get_active_mass_production(cursor, machine_id):
+    cursor.execute(
+        """
+        SELECT mp_id, main_id, mould_id
+        FROM mass_production
+        WHERE machine_code = %s
+          AND COALESCE(status, '') <> 'completed'
+        ORDER BY mp_id DESC
+        LIMIT 1
+        """,
+        (str(machine_id),),
+    )
+    result = cursor.fetchone()
+    return result if result else (None, None, None)
+
+
 def _get_latest_action_start(cursor, main_id, action):
     cursor.execute(
         """
@@ -73,53 +82,40 @@ def _get_elapsed_seconds(cursor, main_id, action):
     result = cursor.fetchone()
     return int(result[0]) if result and result[0] is not None else 0
 
-df = pd.read_sql(f'''
-    SELECT * FROM machine_list
-''', con=db_connection)
-# Initialize the Dash app
-# app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+def _fetch_machine_row(machine_id):
+    query = text(
+        """
+        SELECT machine_code, mould_id, machine_status
+        FROM machine_list
+        WHERE machine_code = :machine_code
+        """
+    )
+    df = pd.read_sql(query, con=get_db_engine(), params={"machine_code": machine_id})
+    return df.iloc[0] if not df.empty else None
+
+
+def _build_mould_options(customer=None):
+    return [
+        {"label": mould_code, "value": mould_code}
+        for mould_code in get_mould_list(customer)
+    ]
+
+
+def _build_customer_options():
+    return [
+        {"label": customer, "value": customer}
+        for customer in get_customer_list()
+    ]
+
+
 dash.register_page(__name__, path="/")
-machines = []
-
-for index, row in df.iterrows():
-    machines.append(row)
-
-mould_code_select = get_mould_list()
-"""
-so if i want to disable the moulds that are already in use (i can just add a true/false column)
-i need to append the data into a dict
-if mould = active disable = true
-for idx, 
-machine{
-    value:
-    disable
-    }
-{"value": mould1, "disabled": true/false}
-(Not done)
-"""
-df_mould = pd.read_sql(f'''
-    SELECT * FROM mould_list
-''', con=db_connection)
-
-
-for index, row in df_mould.iterrows():
-    mould_code_select.append(row["mould_code"])
 
 inline_checklist = html.Div(
     [
         dbc.Label("Customer"),
         dbc.RadioItems(
-            options=[
-                {"label": "Panasonic", "value": 'panasonic'},
-                {"label": "HEM", "value": 'hem'},
-                {"label": "Hfuji", "value": 'hfuji'},
-                {"label": "Yamada", "value": 'yamada'},
-                {"label": "Osaka", "value": 'osaka'},
-                {"label": "SMK", "value": 'smk'},
-                {"label": "UD", "value": 'ud'},
-                {"label": "YPC", "value": 'ypc'},
-            ],
-            value=[],
+            options=[],
+            value=None,
             id="checklist-inline-input",
             inline=True,
         ),
@@ -129,7 +125,7 @@ inline_checklist = html.Div(
 # All items in this list will have the value the same as the label
 select = html.Div(
     dbc.Select(
-        mould_code_select,
+        options=[],
         id="shorthand-select",
     ),
     className="py-2",
@@ -140,6 +136,26 @@ short_hand = html.Div(
         dbc.Form([select]),
         html.P(id="shorthand-output"),
     ]
+)
+
+correct_customer_checklist = html.Div(
+    [
+        dbc.Label("Customer"),
+        dbc.RadioItems(
+            options=[],
+            value=None,
+            id="correct-customer-input",
+            inline=True,
+        ),
+    ]
+)
+
+correct_mould_select = html.Div(
+    dbc.Select(
+        options=[],
+        id="correct-mould-select",
+    ),
+    className="py-2",
 )
 
 
@@ -160,6 +176,12 @@ layout = html.Div([
     dbc.Alert(
             "Start Logging Data",
             id="alert-auto-on",
+            is_open=False,
+            duration=4000,
+        ),
+    dbc.Alert(
+            "Mould updated while production continues",
+            id="alert-auto-correct",
             is_open=False,
             duration=4000,
         ),
@@ -184,6 +206,7 @@ layout = html.Div([
                         [
                             dbc.Button("PRODUCTION START", id="on", n_clicks=0, color="success" , className="btn btn-primary me-2 mb-2"),
                             dbc.Button("PRODUCTION STOP", id="off", n_clicks=0, color="danger", className="btn btn-primary me-2 mb-2"),
+                            dbc.Button("CORRECT MOULD", id="correct-mould", n_clicks=0, color="warning", className="btn btn-primary me-2 mb-2"),
                         ],
                         className="gap-3"
                     ),
@@ -300,7 +323,25 @@ layout = html.Div([
             id="confirmation-4",
             is_open=False,
         )
-    ]),   
+    ]),
+    html.Div([
+        dbc.Modal(
+            [
+                dbc.ModalHeader(dbc.ModalTitle("Correct Active Mould")),
+                dbc.ModalBody([
+                    html.P("Update the mould for the current production run without stopping the machine."),
+                    correct_customer_checklist,
+                    correct_mould_select,
+                ]),
+                dbc.ModalFooter([
+                    dbc.Button("Close", id="close-correct", n_clicks=0),
+                    dbc.Button("Apply", color="primary", id="apply-correct", className="ms-auto", n_clicks=0),
+                ]),
+            ],
+            id="correct-mould-modal",
+            is_open=False,
+        )
+    ]),
     
 
 ])
@@ -317,6 +358,7 @@ layout = html.Div([
     Output('qas', 'disabled'),
     #stop buttons
     Output('off', 'disabled'),
+    Output('correct-mould', 'disabled'),
     Output('ume', 'disabled'),
     # Output('dme', 'disabled'),
     Output('qae', 'disabled'),
@@ -327,11 +369,36 @@ layout = html.Div([
 )
 
 def update_output(value, n):
-    df = pd.read_sql("SELECT * FROM machine_list", con=db_connection)
-    filtered_df = df[df["machine_code"] == value]
+    try:
+        machine_row = _fetch_machine_row(value)
+    except Exception as exc:
+        return (
+            f"Status: Database unavailable ({exc})",
+            "Active Mould: Unknown",
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+        )
 
-    mould_id = filtered_df["mould_id"].iloc[0]
-    status = filtered_df["machine_status"].iloc[0]
+    if machine_row is None:
+        return (
+            "Status: Unknown machine",
+            "Active Mould: Unknown",
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+        )
+
+    mould_id = machine_row["mould_id"]
+    status = machine_row["machine_status"]
     # Disabled by default
     button_state_on = True  
     button_state_ums = True 
@@ -339,6 +406,7 @@ def update_output(value, n):
     button_state_qas = True
 
     button_state_off = True  
+    button_state_correct = True
     button_state_ume = True
     # button_state_dme = True
     button_state_qae = True
@@ -356,14 +424,16 @@ def update_output(value, n):
         button_state_ums = False  
         # button_state_dms = False
         button_state_qas = False
+        button_state_correct = False
 
     elif status == "adjustment/qa in progress":
         button_state_qae = False
 
     elif status == "mass prod":
         button_state_off = False  
+        button_state_correct = False
 
-    return f"Status: {status}", f"Active Mould: {mould_id}", button_state_on, button_state_ums, button_state_qas, button_state_off, button_state_ume, button_state_qae
+    return f"Status: {status}", f"Active Mould: {mould_id}", button_state_on, button_state_ums, button_state_qas, button_state_off, button_state_correct, button_state_ume, button_state_qae
 
 
 """
@@ -399,7 +469,7 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
         try:
             # toggle_machine_timer(machine_id)
             # Database update
-            connection = create_engine(db_connection_str).raw_connection()
+            connection = get_raw_connection()
             with connection.cursor() as cursor:
                 current_status = _get_machine_status(cursor, machine_id)
                 if current_status == "change mould in progress":
@@ -422,7 +492,7 @@ def change_mould_start(ums, close, ok, mould_id,  is_open, machine_id):
                 connection.commit()
 
                 message = json.dumps({"command": "ums"})
-                publish_message(mqtt_machine, message, qos=2)  
+                publish_message(mqtt_machine, message, qos=2)
 
         except Exception as e:
             print(f"Error updating database: {e}")
@@ -468,7 +538,7 @@ def change_mould_end(ume, yes, no, name, is_open, machine_id):
     # Yes button: update DB and close modal
     if triggered_id == "yes-1":
         try:
-            connection = create_engine(db_connection_str).raw_connection()
+            connection = get_raw_connection()
             with connection.cursor() as cursor:
                 current_status = _get_machine_status(cursor, machine_id)
                 if current_status != "change mould in progress":
@@ -535,7 +605,7 @@ def adjustment(qas, alert, machine_id):
         if "qas" not in triggered_id:
             return dash.no_update
 
-        connection = create_engine(db_connection_str).raw_connection()
+        connection = get_raw_connection()
         with connection.cursor() as cursor:
             print("Connected to DB")
 
@@ -608,7 +678,7 @@ def adjustment_end(ume, yes, no, name, is_open, machine_id):
             return True
         
         try:
-            connection = create_engine(db_connection_str).raw_connection()
+            connection = get_raw_connection()
             with connection.cursor() as cursor:
                 current_status = _get_machine_status(cursor, machine_id)
                 if current_status != "adjustment/qa in progress":
@@ -671,6 +741,7 @@ START/STOP LOGGING DATA
 )
 def logging_start(on, alert, machine_id):
     mqtt_machine = f"machines/{machine_id}"
+    connection = None
     # Check if the callback was triggered by the "qas" button
     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
     if triggered_id != "on":
@@ -679,7 +750,7 @@ def logging_start(on, alert, machine_id):
 
     # Proceed with updating the database if "qas" was clicked
     try:
-        connection = create_engine(db_connection_str).raw_connection()
+        connection = get_raw_connection()
         with connection.cursor() as cursor:
             sql = """
             UPDATE machine_list 
@@ -722,14 +793,15 @@ def logging_start(on, alert, machine_id):
                         "mp_id": last_inserted_id
                     }
                 # mqttc.publish(mqtt_machine, payload=json.dumps(message))
-                publish_message(mqtt_machine, payload=json.dumps(message), qos=2)            
+                publish_message(mqtt_machine, payload=json.dumps(message), qos=2)
 
-            connection.commit() 
+            connection.commit()
             return True  # Show the alert
     except Exception as e:
         print(f"Error updating database: {e}")
     finally:
-        connection.close()
+        if connection:
+            connection.close()
 
     return dash.no_update
 
@@ -749,6 +821,7 @@ send the last inserted_id along with the command "start" to the esp32 to signal 
 def logging_stop(dme, yes, no, is_open, machine_id):
     triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
     mqtt_machine = f"machines/{machine_id}"
+    connection = None
     # When "ume" is clicked, open the modal
     if triggered_id == "off":
 
@@ -757,7 +830,7 @@ def logging_stop(dme, yes, no, is_open, machine_id):
     # When "yes" is clicked, update the database and close the modal
     if triggered_id == "yes-4":
         try:
-            connection = create_engine(db_connection_str).raw_connection()
+            connection = get_raw_connection()
             with connection.cursor() as cursor:
                 sql = """
                 UPDATE machine_list 
@@ -773,7 +846,8 @@ def logging_stop(dme, yes, no, is_open, machine_id):
         except Exception as e:
             print(f"Error updating database: {e}")
         finally:
-            connection.close()
+            if connection:
+                connection.close()
         return False  # Close modal after action
 
     # When "no" is clicked, just close the modal without any action
@@ -785,11 +859,127 @@ def logging_stop(dme, yes, no, is_open, machine_id):
 
 
 @callback(
+    Output("correct-customer-input", "options"),
+    Input("machine_id", "value")
+)
+def refresh_correct_customer_options(_machine_id):
+    try:
+        return _build_customer_options()
+    except Exception:
+        return []
+
+
+@callback(
+    Output("correct-mould-select", "options"),
+    Input("correct-customer-input", "value")
+)
+def correct_mould_filter(customer):
+    try:
+        return _build_mould_options(customer)
+    except Exception:
+        return []
+
+
+@callback(
+    Output("correct-mould-modal", "is_open"),
+    Output("alert-auto-correct", "is_open"),
+    Output("refresh", "n_intervals"),
+    Input("correct-mould", "n_clicks"),
+    Input("close-correct", "n_clicks"),
+    Input("apply-correct", "n_clicks"),
+    State("correct-mould-modal", "is_open"),
+    State("machine_id", "value"),
+    State("correct-mould-select", "value"),
+    State("refresh", "n_intervals"),
+    prevent_initial_call=True,
+)
+def correct_active_mould(open_clicks, close_clicks, apply_clicks, is_open, machine_id, mould_id, refresh_count):
+    triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0] if callback_context.triggered else None
+
+    if triggered_id == "correct-mould":
+        return True, False, refresh_count
+
+    if triggered_id == "close-correct":
+        return False, False, refresh_count
+
+    if triggered_id != "apply-correct":
+        return is_open, False, refresh_count
+
+    if not mould_id or not str(mould_id).strip():
+        return True, False, refresh_count
+
+    connection = None
+
+    try:
+        connection = get_raw_connection()
+        with connection.cursor() as cursor:
+            current_status = _get_machine_status(cursor, machine_id)
+            if current_status not in {"mass prod", "active mould not running"}:
+                return False, False, refresh_count
+
+            mp_id, active_main_id, _current_mould = _get_active_mass_production(cursor, machine_id)
+            main_id = active_main_id if active_main_id is not None else _get_latest_main_id(cursor, machine_id)
+
+            cursor.execute(
+                """
+                UPDATE machine_list
+                SET mould_id = %s
+                WHERE machine_code = %s
+                """,
+                (str(mould_id), str(machine_id)),
+            )
+
+            if mp_id is not None:
+                cursor.execute(
+                    """
+                    UPDATE mass_production
+                    SET mould_id = %s
+                    WHERE mp_id = %s
+                    """,
+                    (str(mould_id), str(mp_id)),
+                )
+
+            if main_id is not None:
+                cursor.execute(
+                    """
+                    UPDATE joblist
+                    SET mould_code = %s
+                    WHERE main_id = %s
+                    """,
+                    (str(mould_id), str(main_id)),
+                )
+
+            connection.commit()
+    except Exception as e:
+        print(f"Error correcting mould during production: {e}")
+        return True, False, refresh_count
+    finally:
+        if connection:
+            connection.close()
+
+    next_refresh = 0 if refresh_count is None or refresh_count < 0 else refresh_count + 1
+    return False, True, next_refresh
+
+
+@callback(
     Output('shorthand-select', 'options'),
     Input('checklist-inline-input', 'value')
 )
 
 def mould_filter(customer):
-    updated_list = get_mould_list(customer)
-    return updated_list
+    try:
+        return _build_mould_options(customer)
+    except Exception:
+        return []
+
+
+@callback(
+    Output('checklist-inline-input', 'options'),
+    Input('machine_id', 'value')
+)
+def refresh_customer_options(_machine_id):
+    try:
+        return _build_customer_options()
+    except Exception:
+        return []
     

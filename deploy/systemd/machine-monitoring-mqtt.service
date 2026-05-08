@@ -1,0 +1,18 @@
+[Unit]
+Description=Machine Monitoring MQTT Consumer
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ud
+WorkingDirectory=/home/ud/machine_monitoring/20250926
+EnvironmentFile=/etc/machine-monitoring.env
+ExecStart=/usr/bin/env python3 /home/ud/machine_monitoring/20250926/scripts/run_mqtt_consumer.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

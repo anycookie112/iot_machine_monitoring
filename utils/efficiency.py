@@ -1,26 +1,22 @@
 import pandas as pd
-from sqlalchemy import create_engine, text, bindparam
+from sqlalchemy import text, bindparam
 from datetime import datetime
-from config.config import DB_CONFIG
 
-DB_URL = (
-    f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}"
-    f"@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-)
+from utils.db import get_db_engine, get_raw_connection
 
 
 def _normalize_mp_ids(mp_id):
     if mp_id is None:
         return []
     if isinstance(mp_id, (list, tuple, set)):
-        ids = [int(i) for i in mp_id if i is not None]
+        ids = [int(i) for i in mp_id if i is not None and int(i) > 0]
     else:
-        ids = [int(mp_id)]
+        parsed_id = int(mp_id)
+        ids = [parsed_id] if parsed_id > 0 else []
     return ids
 
 
 def calculate_downtime(mp_id):
-    db_engine = create_engine(DB_URL)
     mp_ids = _normalize_mp_ids(mp_id)
 
     if not mp_ids:
@@ -41,7 +37,7 @@ def calculate_downtime(mp_id):
         .bindparams(bindparam("mp_ids", expanding=True))
     )
 
-    df = pd.read_sql(query, con=db_engine, params={"mp_ids": mp_ids})
+    df = pd.read_sql(query, con=get_db_engine(), params={"mp_ids": mp_ids})
     if df.empty:
         return pd.DataFrame(), None
 
@@ -69,7 +65,6 @@ def calculate_downtime(mp_id):
 
 
 def calculate_downtime_df(mp_id):
-    db_engine = create_engine(DB_URL)
     mp_ids = _normalize_mp_ids(mp_id)
     if not mp_ids:
         return pd.DataFrame(), pd.DataFrame()
@@ -88,7 +83,7 @@ def calculate_downtime_df(mp_id):
         .bindparams(bindparam("mp_ids", expanding=True))
     )
 
-    df = pd.read_sql(query, con=db_engine, params={"mp_ids": mp_ids})
+    df = pd.read_sql(query, con=get_db_engine(), params={"mp_ids": mp_ids})
     if df.empty:
         return pd.DataFrame(), df
 
@@ -108,7 +103,7 @@ def calculate_downtime_df(mp_id):
 
 def update_sql(mp_id, complete = False):
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    connection = create_engine(DB_URL).raw_connection()
+    connection = get_raw_connection()
     try:
         with connection.cursor() as cursor:
             dummy, information = calculate_downtime(mp_id)
@@ -138,7 +133,6 @@ def update_sql(mp_id, complete = False):
 
 
 def calculate_downtime_df_daily_report(mp_id, date= datetime.now().date()):
-    db_engine = create_engine(DB_URL)
     mp_ids = _normalize_mp_ids(mp_id)
     if not mp_ids:
         return pd.DataFrame(), pd.DataFrame()
@@ -158,7 +152,7 @@ def calculate_downtime_df_daily_report(mp_id, date= datetime.now().date()):
         .bindparams(bindparam("mp_ids", expanding=True))
     )
     
-    df = pd.read_sql(query, con=db_engine, params={"mp_ids": mp_ids, "date": date})
+    df = pd.read_sql(query, con=get_db_engine(), params={"mp_ids": mp_ids, "date": date})
     if df.empty:
         return pd.DataFrame(), df
 

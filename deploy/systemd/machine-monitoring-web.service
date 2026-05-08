@@ -1,0 +1,18 @@
+[Unit]
+Description=Machine Monitoring Dash Web UI
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ud
+WorkingDirectory=/home/ud/machine_monitoring/20250926
+EnvironmentFile=/etc/machine-monitoring.env
+ExecStart=/home/ud/machine_monitoring/20250926/scripts/run_web.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

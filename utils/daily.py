@@ -1,14 +1,12 @@
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine,text
+from sqlalchemy import text
 import plotly.graph_objects as go
 import pandas as pd
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from config.config import DB_CONFIG
 from utils.efficiency import calculate_downtime
-
-db_connection_str = create_engine(f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}")
+from utils.db import get_db_engine
 
 def calculate_filtered_variance(df, column_name, threshold=1.5):
     """
@@ -56,7 +54,7 @@ def fetch_data_variation(date = datetime.now().replace(hour=8, minute=0, second=
     start, mid , end = date_calculation(date)
 
     # Run query and load into a DataFrame
-    with db_connection_str.connect() as connection:
+    with get_db_engine().connect() as connection:
 
         df = pd.read_sql(query, connection, params={
             "start_time": start,
@@ -114,109 +112,282 @@ yesterday_date_8am = (datetime.now() - timedelta(days=1)).replace(hour=8, minute
 yesterday_date_8pm = (datetime.now() - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
 current_date_8am = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
 
+STOP_ACTIONS = {"abnormal_cycle", "downtime"}
+PRODUCTION_ACTIONS = ("normal_cycle", "abnormal_cycle", "downtime")
+MANUAL_STOP_BOUNDARY_ACTIONS = {"change mould start", "adjustment start"}
 
-def fetch_data(start_time ,mid_time , end_time ):
-    # query = text("""
-        # SELECT monitoring.*, production.mould_id, production.machine_code
-        # FROM machine_monitoring.monitoring AS monitoring
-        # INNER JOIN machine_monitoring.mass_production AS production
-        #     ON monitoring.mp_id = production.mp_id
-        # WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-        # AND monitoring.action IN ('downtime');
-    # """)
 
-    query = text("""
+def _shift_name(timestamp_value):
+    return "Shift 1" if 8 <= timestamp_value.hour < 20 else "Shift 2"
+
+
+def _empty_stop_clusters():
+    return pd.DataFrame(
+        columns=[
+            "mp_id",
+            "machine_code",
+            "mould_id",
+            "start_id",
+            "end_id",
+            "start_action",
+            "closed_by",
+            "cluster_start_time",
+            "cluster_end_time",
+            "duration_seconds",
+            "duration_hr",
+            "hour",
+            "shift",
+        ]
+    )
+
+
+def _build_shift_hour_frame(cluster_df, shift_name):
+    hours = list(range(8, 20)) if shift_name == "Shift 1" else list(range(20, 24)) + list(range(0, 8))
+    base = pd.DataFrame({"hour": hours})
+
+    if cluster_df is None or cluster_df.empty:
+        base["stops"] = 0
+        base["shift"] = shift_name
+        return base
+
+    grouped = (
+        cluster_df[cluster_df["shift"] == shift_name]
+        .groupby("hour")
+        .size()
+        .reset_index(name="stops")
+    )
+
+    merged = base.merge(grouped, on="hour", how="left").fillna(0).infer_objects(copy=False)
+    merged["stops"] = merged["stops"].astype(int)
+    merged["shift"] = shift_name
+    return merged
+
+
+def _build_stop_clusters(events_df, window_end, manual_events_df=None):
+    if (events_df is None or events_df.empty) and (manual_events_df is None or manual_events_df.empty):
+        return _empty_stop_clusters()
+
+    production_events = (
+        events_df.copy()
+        if events_df is not None
+        else pd.DataFrame(
+            columns=[
+                "idmonitoring",
+                "mp_id",
+                "action",
+                "time_input",
+                "machine_code",
+                "mould_id",
+            ]
+        )
+    )
+    manual_events = (
+        manual_events_df.copy()
+        if manual_events_df is not None
+        else pd.DataFrame(columns=["idmonitoring", "action", "time_input", "machine_code", "mould_id"])
+    )
+
+    if production_events.empty and manual_events.empty:
+        return _empty_stop_clusters()
+
+    if not production_events.empty:
+        production_events["time_input"] = pd.to_datetime(production_events["time_input"])
+        production_events["event_source"] = "production"
+        production_events["event_priority"] = 1
+
+    if not manual_events.empty:
+        manual_events["time_input"] = pd.to_datetime(manual_events["time_input"])
+        manual_events["event_source"] = "manual"
+        manual_events["event_priority"] = 0
+        if "mp_id" not in manual_events.columns:
+            manual_events["mp_id"] = pd.NA
+
+    stream_columns = [
+        "idmonitoring",
+        "mp_id",
+        "action",
+        "time_input",
+        "machine_code",
+        "mould_id",
+        "event_source",
+        "event_priority",
+    ]
+    event_stream = pd.concat(
+        [
+            production_events.reindex(columns=stream_columns),
+            manual_events.reindex(columns=stream_columns),
+        ],
+        ignore_index=True,
+    )
+    event_stream = event_stream.dropna(subset=["machine_code", "time_input"])
+    event_stream = event_stream.sort_values(
+        ["machine_code", "time_input", "event_priority", "idmonitoring"]
+    ).reset_index(drop=True)
+
+    clusters = []
+
+    for machine_code, group in event_stream.groupby("machine_code", sort=False):
+        open_cluster = None
+
+        for row in group.itertuples(index=False):
+            action = row.action
+            event_time = pd.Timestamp(row.time_input)
+
+            if action in STOP_ACTIONS:
+                if open_cluster is None:
+                    open_cluster = {
+                        "mp_id": getattr(row, "mp_id", None),
+                        "machine_code": machine_code,
+                        "mould_id": getattr(row, "mould_id", None),
+                        "start_id": getattr(row, "idmonitoring", None),
+                        "start_action": action,
+                        "cluster_start_time": event_time,
+                    }
+                continue
+
+            if (
+                action == "normal_cycle" or action in MANUAL_STOP_BOUNDARY_ACTIONS
+            ) and open_cluster is not None:
+                open_cluster["cluster_end_time"] = event_time
+                open_cluster["end_id"] = getattr(row, "idmonitoring", None)
+                open_cluster["closed_by"] = action
+                clusters.append(open_cluster)
+                open_cluster = None
+
+        if open_cluster is not None:
+            open_cluster["cluster_end_time"] = pd.Timestamp(window_end)
+            open_cluster["end_id"] = None
+            open_cluster["closed_by"] = "window_end"
+            clusters.append(open_cluster)
+
+    cluster_df = pd.DataFrame(
+        clusters,
+        columns=[
+            "mp_id",
+            "machine_code",
+            "mould_id",
+            "start_id",
+            "end_id",
+            "start_action",
+            "closed_by",
+            "cluster_start_time",
+            "cluster_end_time",
+        ],
+    )
+
+    if cluster_df.empty:
+        return _empty_stop_clusters()
+
+    cluster_df["cluster_start_time"] = pd.to_datetime(cluster_df["cluster_start_time"])
+    cluster_df["cluster_end_time"] = pd.to_datetime(cluster_df["cluster_end_time"])
+    cluster_df["duration_seconds"] = (
+        cluster_df["cluster_end_time"] - cluster_df["cluster_start_time"]
+    ).dt.total_seconds().clip(lower=0)
+    cluster_df["duration_hr"] = cluster_df["duration_seconds"] / 3600
+    cluster_df["hour"] = cluster_df["cluster_start_time"].dt.hour
+    cluster_df["shift"] = cluster_df["cluster_start_time"].apply(_shift_name)
+    return cluster_df
+
+
+def _fetch_production_events(start_time, end_time, mp_id=None, machine_code=None):
+    query = """
     SELECT
-        monitoring.*,
-        MAX(production.mould_id) AS mould_id,
-        MAX(production.machine_code) AS machine_code,
-        MAX(ml.standard_ct) AS standard_ct
+        monitoring.idmonitoring,
+        monitoring.main_id,
+        monitoring.mp_id,
+        monitoring.action,
+        monitoring.time_taken,
+        monitoring.time_input,
+        production.mould_id,
+        production.machine_code,
+        ml.standard_ct
     FROM machine_monitoring.monitoring AS monitoring
     INNER JOIN machine_monitoring.mass_production AS production
         ON monitoring.mp_id = production.mp_id
     INNER JOIN machine_monitoring.mould_list AS ml
         ON production.mould_id = ml.mould_code
     WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-    AND monitoring.action IN ('downtime')
-    GROUP BY monitoring.idmonitoring;
-    """)
+      AND monitoring.action IN ('normal_cycle', 'abnormal_cycle', 'downtime')
+    """
 
-    # query2 = text("""
-    #     SELECT monitoring.*, production.mould_id, production.machine_code
-    #     FROM machine_monitoring.monitoring AS monitoring
-    #     INNER JOIN machine_monitoring.mass_production AS production
-    #         ON monitoring.mp_id = production.mp_id
-    #     WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-    #     AND monitoring.action IN ('normal_cycle');
-    # """)
+    params = {
+        "start_time": start_time,
+        "end_time": end_time,
+    }
 
-    metadata_query = text("""
-    SELECT DISTINCT
-        mp.mp_id,
-        mp.machine_code,
-        mp.mould_id,
-        ml.standard_ct
-    FROM machine_monitoring.mass_production AS mp
-    INNER JOIN machine_monitoring.mould_list AS ml
-        ON mp.mould_id = ml.mould_code
-    INNER JOIN machine_monitoring.monitoring AS monitoring
-        ON monitoring.mp_id = mp.mp_id
-    WHERE monitoring.time_input BETWEEN :start_time AND :end_time
-    AND monitoring.action IN ('normal_cycle', 'abnormal_cycle', 'downtime')
-    """)
+    if mp_id is not None:
+        query += " AND monitoring.mp_id = :mp_id"
+        params["mp_id"] = mp_id
 
-    # Run query and load into a DataFrame
-    with db_connection_str.connect() as connection:
+    if machine_code is not None:
+        query += " AND production.machine_code = :machine_code"
+        params["machine_code"] = machine_code
 
-        df_metadata = pd.read_sql(metadata_query, connection, params={
-            "start_time": start_time,
-            "end_time": end_time
-        })
+    query += " ORDER BY monitoring.mp_id, monitoring.time_input, monitoring.idmonitoring"
 
+    with get_db_engine().connect() as connection:
+        df = pd.read_sql(text(query), connection, params=params)
 
+    if df.empty:
+        return df
 
-        # Get unique machine_code and corresponding mould_id
-        machines_running = df_metadata.drop_duplicates(subset="mp_id")
-        # print(machines_running)
-
-        # # Convert to DataFrame
-        # df_main = pd.DataFrame(machines_running)
-        # # print(df_main)
-
-        df = pd.read_sql(query, connection, params={
-            "start_time": start_time,
-            "end_time": mid_time
-        })
-        # print(df)
-
-        df2 = pd.read_sql(query, connection, params={
-            "start_time": mid_time,
-            "end_time": end_time
-        })
-
-    df['time_input'] = pd.to_datetime(df['time_input'])
+    df = df.drop_duplicates(subset=["idmonitoring"]).reset_index(drop=True)
+    df["time_input"] = pd.to_datetime(df["time_input"])
     df["date"] = df["time_input"].dt.date
+    return df
 
-    df2['time_input'] = pd.to_datetime(df2['time_input'])
-    df2["date"] = df2["time_input"].dt.date
 
-    # Optional cleanup
-    data_excluded = df.drop(columns=['status', 'time_completed'], errors='ignore')
-    return machines_running, df, df2
+def _fetch_manual_boundary_events(start_time, end_time, machine_code=None):
+    query = """
+    SELECT
+        monitoring.idmonitoring,
+        monitoring.main_id,
+        monitoring.action,
+        monitoring.time_input,
+        joblist.machine_code,
+        joblist.mould_code AS mould_id
+    FROM machine_monitoring.monitoring AS monitoring
+    INNER JOIN machine_monitoring.joblist AS joblist
+        ON monitoring.main_id = joblist.main_id
+    WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+      AND monitoring.action IN ('adjustment start', 'change mould start')
+    """
+
+    params = {
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+
+    if machine_code is not None:
+        query += " AND joblist.machine_code = :machine_code"
+        params["machine_code"] = machine_code
+
+    query += " ORDER BY joblist.machine_code, monitoring.time_input, monitoring.idmonitoring"
+
+    with get_db_engine().connect() as connection:
+        df = pd.read_sql(text(query), connection, params=params)
+
+    if df.empty:
+        return df
+
+    df = df.drop_duplicates(subset=["idmonitoring"]).reset_index(drop=True)
+    df["time_input"] = pd.to_datetime(df["time_input"])
+    return df
+
+
+def fetch_data(start_time ,mid_time , end_time ):
+    return _fetch_production_events(start_time, end_time)
 
 def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)):
     start_time, mid_time, end_time = date_calculation(date)
-    df_unique_raw, shift1, shift2 = fetch_data(start_time, mid_time, end_time)
-    # print(df_unique_raw, shift1, shift2)
+    event_df = fetch_data(start_time, mid_time, end_time)
 
-    # If there's no data at all, return an empty DataFrame with the expected columns
-    if shift1.empty and shift2.empty and df_unique_raw.empty:
+    if event_df.empty:
         return (
             pd.DataFrame(columns=[
                 "mp_id", "machine_code", "mould_id", "total_stops",
                 "shift_1_stops", "shift_1_downtime",
                 "shift_2_stops", "shift_2_downtime", "standard_ct",
-                # add any other columns expected from information_df below
             ]),
             {"shift_1_totaldt": 0, "shift_2_totaldt": 0, "overall_totaldt": 0}
         )
@@ -230,28 +401,42 @@ def daily_report(date=datetime.now().replace(hour=8, minute=0, second=0, microse
             columns=["mp_id", "min_cycle_time", "median_cycle_time", "max_cycle_time", "variance"]
         )
 
-    # Ensure df_unique has one row per mp_id
-    df_unique = df_unique_raw[["mp_id", "machine_code", "mould_id", "standard_ct"]].drop_duplicates(subset="mp_id")
+    df_unique = event_df[["mp_id", "machine_code", "mould_id", "standard_ct"]].drop_duplicates(subset="mp_id")
 
-    # Aggregate data for Shift 1
-    df_counts1 = shift1.groupby("mp_id").agg(
-        shift_1_stops=("idmonitoring", "count"),
-        shift_1_downtime=("time_taken", "sum")
-    ).reset_index()
+    manual_boundary_df = _fetch_manual_boundary_events(start_time, end_time)
+    cluster_df = _build_stop_clusters(event_df, end_time, manual_boundary_df)
+    if cluster_df.empty:
+        df_stop_counts = pd.DataFrame(columns=["mp_id", "shift_1_stops", "shift_2_stops"])
+    else:
+        df_stop_counts = (
+            cluster_df.assign(stop_count=1)
+            .pivot_table(index="mp_id", columns="shift", values="stop_count", aggfunc="sum", fill_value=0)
+            .reset_index()
+            .rename(columns={"Shift 1": "shift_1_stops", "Shift 2": "shift_2_stops"})
+        )
 
-    # Aggregate data for Shift 2
-    df_counts2 = shift2.groupby("mp_id").agg(
-        shift_2_stops=("idmonitoring", "count"),
-        shift_2_downtime=("time_taken", "sum")
-    ).reset_index()
+    for column in ["shift_1_stops", "shift_2_stops"]:
+        if column not in df_stop_counts.columns:
+            df_stop_counts[column] = 0
 
-    # Merge all together on mp_id
-    merged = pd.merge(df_unique, df_counts1, how='outer', on='mp_id')
-    merged = pd.merge(merged, df_counts2, how='outer', on='mp_id')
-    merged = pd.merge(merged, information_df, how='outer', on='mp_id', suffixes=('', '_info'))
+    if cluster_df.empty:
+        df_downtime = pd.DataFrame(columns=["mp_id", "shift_1_downtime", "shift_2_downtime"])
+    else:
+        df_downtime = (
+            cluster_df
+            .pivot_table(index="mp_id", columns="shift", values="duration_seconds", aggfunc="sum", fill_value=0)
+            .reset_index()
+            .rename(columns={"Shift 1": "shift_1_downtime", "Shift 2": "shift_2_downtime"})
+        )
 
+    for column in ["shift_1_downtime", "shift_2_downtime"]:
+        if column not in df_downtime.columns:
+            df_downtime[column] = 0
 
-    # Optional: fill missing stop/downtime values with 0
+    merged = pd.merge(df_unique, df_stop_counts, how="left", on="mp_id")
+    merged = pd.merge(merged, df_downtime, how="left", on="mp_id")
+    merged = pd.merge(merged, information_df, how="left", on="mp_id", suffixes=("", "_info"))
+
     merged.fillna({
         "shift_1_stops": 0,
         "shift_1_downtime": 0,
@@ -338,49 +523,24 @@ def hourly(mp_id=None, date=datetime.now().replace(hour=8, minute=0, second=0, m
         date = datetime.strptime(date, "%Y-%m-%d")
 
     report_date = date.date() if isinstance(date, datetime) else date
+    start_time, _mid_time, end_time = date_calculation_new(report_date)
 
     if not mp_id:
         print("No MP ID provided.")
         return pd.DataFrame(), pd.DataFrame()
 
-    # Query only the selected day's detail rows instead of loading all history for the mp_id.
-    df, _ = calculate_downtime_daily_report(mp_id, report_date)
-    if df is None or df.empty:
+    event_df = _fetch_production_events(start_time, end_time, mp_id=mp_id)
+    if event_df is None or event_df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    df = df.copy()
-    df["time_input"] = pd.to_datetime(df["time_input"])
+    machine_code = event_df["machine_code"].iloc[0]
+    machine_events_df = _fetch_production_events(start_time, end_time, machine_code=machine_code)
+    manual_boundary_df = _fetch_manual_boundary_events(start_time, end_time, machine_code=machine_code)
+    cluster_df = _build_stop_clusters(machine_events_df, end_time, manual_boundary_df)
+    cluster_df = cluster_df[cluster_df["mp_id"] == mp_id].copy()
 
-    df_downtime = df[df["action"] == "downtime"].copy()
-    df_abnormal = df[df["action"] == "abnormal_cycle"].copy()
-
-    for current_df in (df_downtime, df_abnormal):
-        current_df["hour"] = current_df["time_input"].dt.hour
-        current_df["shift"] = current_df["time_input"].apply(
-            lambda value: "Shift 1" if 8 <= value.hour < 20 else "Shift 2"
-        )
-
-    grouped_downtime = df_downtime.groupby(["shift", "hour"]).size().reset_index(name="stops")
-    grouped_abnormal = df_abnormal.groupby(["shift", "hour"]).size().reset_index(name="stops_abnormal")
-
-    shift1_hours = pd.DataFrame({"hour": range(8, 20)})
-    shift2_hours = pd.DataFrame({"hour": list(range(20, 24)) + list(range(0, 8))})
-
-    def merge_shift(shift_hours, shift_name):
-        merged = (
-            shift_hours
-            .merge(grouped_downtime[grouped_downtime["shift"] == shift_name], on="hour", how="left")
-            .merge(grouped_abnormal[grouped_abnormal["shift"] == shift_name], on="hour", how="left")
-            .fillna(0)
-            .infer_objects(copy=False)
-        )
-        merged["stops"] = merged["stops"].astype(int)
-        merged["stops_abnormal"] = merged["stops_abnormal"].astype(int)
-        merged["shift"] = shift_name
-        return merged
-
-    shift1 = merge_shift(shift1_hours, "Shift 1")
-    shift2 = merge_shift(shift2_hours, "Shift 2")
+    shift1 = _build_shift_hour_frame(cluster_df, "Shift 1")
+    shift2 = _build_shift_hour_frame(cluster_df, "Shift 2")
 
     return shift1, shift2
 
@@ -402,42 +562,15 @@ def date_calculation_new(date):
 
 
 def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
-    # Connect to the database
-    db_connection_str = f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-    db_engine = create_engine(db_connection_str)
-
     if not mp_id:  # Check if mp_id is None or empty
         print("Error: mp_id is None or empty")
         return pd.DataFrame(), None  # Return an empty DataFrame to prevent errors
     if isinstance(date, str):
         date = datetime.strptime(date, "%Y-%m-%d").date()
-    # previous_date = date - timedelta(days=1)
+    start_date, _mid_time, end_date = date_calculation_new(date)
 
-    start_date, mid_time, end_date = date_calculation_new(date)
+    df = _fetch_production_events(start_date, end_date, mp_id=mp_id)
 
-
- 
-    
-    query = """
-        SELECT DISTINCT m.*, mm.standard_ct 
-        FROM monitoring AS m
-        JOIN joblist AS j ON m.main_id = j.main_id
-        JOIN mould_list AS mm ON j.mould_code = mm.mould_code
-        WHERE m.mp_id = %s
-        AND m.time_input BETWEEN %s AND %s
-        ORDER BY m.time_input;
-        """
-
-    # Correctly define params as a tuple
-    params = (mp_id,start_date, end_date,)
-
-    # Execute query
-    with db_engine.connect() as connection:
-        df = pd.read_sql(query, connection, params=params)
-        # print("test")
-        # print(df)
-
-    # Check if the DataFrame is empty
     if df.empty:
         print("No data found for the given mp_id and date.")
         return pd.DataFrame(), {
@@ -448,51 +581,62 @@ def calculate_downtime_daily_report(mp_id, date=datetime.now().date()):
             "total_times_stoped": 0,
             "median_cycle_time": 0,
             "total_shots": 0,
-            "start_time": start_time,
-            "end_time": end_time,
+            "start_time": start_date,
+            "end_time": end_date,
         }
 
-    df['time_input'] = pd.to_datetime(df['time_input'])
-    # print(f"1:{df}")
-
-    df["date"] = df["time_input"].dt.date
-    # print(f"2:{df}")
-
-    df["time"] = df["time_input"].dt.time
-    # print(f"3:{df}")
-    dff = df.groupby(["action"]).time_taken.sum().reset_index()
-    # print(dff)
-
-    # filtered_df = df
-    filtered_df = df[(df["action"] == "abnormal_cycle") | (df["action"] == "downtime")].copy()
-    # print(filtered_df)
+    df = df.copy()
+    action_totals = df.groupby("action")["time_taken"].sum()
+    machine_code = df["machine_code"].iloc[0]
+    machine_events_df = _fetch_production_events(start_date, end_date, machine_code=machine_code)
+    manual_boundary_df = _fetch_manual_boundary_events(start_date, end_date, machine_code=machine_code)
+    cluster_df = _build_stop_clusters(machine_events_df, end_date, manual_boundary_df)
+    cluster_df = cluster_df[cluster_df["mp_id"] == mp_id].copy()
     start_time = df["time_input"].min()
     end_time = df["time_input"].max()
 
-    total_stop = len(df[df["action"] == "downtime"])
+    total_stop = len(cluster_df.index)
     total_shots = len(df[df["action"] == "normal_cycle"])
-    total_running = dff['time_taken'].sum()
+    normal_cycle_seconds = float(action_totals.get("normal_cycle", 0))
+    downtime_seconds = float(cluster_df["duration_seconds"].sum()) if not cluster_df.empty else 0.0
+    total_running = normal_cycle_seconds + downtime_seconds
     median_cycle_time = round(df["time_taken"].median(), 2)
 
-    cycle_time = df['standard_ct'].values[0]  
+    cycle_time = float(df["standard_ct"].iloc[0]) if not df["standard_ct"].isna().all() else 0
     ideal_time = total_shots * cycle_time
-    downtime = dff['time_taken'].values[1]
+    downtime = downtime_seconds
 
-    efficiency = ((total_shots * cycle_time) / total_running) * 100
+    efficiency = ((total_shots * cycle_time) / total_running) * 100 if total_running else 0
 
-
-        # Ensure time_taken is numeric
-    filtered_df["time_taken"] = pd.to_numeric(filtered_df["time_taken"], errors="coerce")
-
-    # Sort by time_input to ensure proper sequence
-    filtered_df = filtered_df.sort_values(by="time_input").reset_index(drop=True)
-    # print(filtered_df)
-    filtered_df["total_minutes"] = filtered_df["time_taken"] / 60
-    filtered_df["total_minutes"] = filtered_df["total_minutes"].round(2)
-
-    total_downtime = filtered_df["time_taken"].sum() / 60
-    # print(f"Total Downtime: {total_downtime.round(2)} minutes")
-
+    if cluster_df.empty:
+        filtered_df = pd.DataFrame(
+            columns=[
+                "start_id",
+                "end_id",
+                "time_input",
+                "end_time",
+                "time_taken",
+                "total_minutes",
+                "closed_by",
+            ]
+        )
+    else:
+        filtered_df = cluster_df.sort_values(by="cluster_start_time").reset_index(drop=True)
+        filtered_df["time_input"] = filtered_df["cluster_start_time"]
+        filtered_df["end_time"] = filtered_df["cluster_end_time"]
+        filtered_df["time_taken"] = filtered_df["duration_seconds"].round(1)
+        filtered_df["total_minutes"] = (filtered_df["duration_seconds"] / 60).round(2)
+        filtered_df = filtered_df[
+            [
+                "start_id",
+                "end_id",
+                "time_input",
+                "end_time",
+                "time_taken",
+                "total_minutes",
+                "closed_by",
+            ]
+        ]
 
     return filtered_df, {
         "production_time": total_running,
@@ -550,7 +694,7 @@ def fetch_data_monthly(machine_selected, date= datetime.now()):
     """)
 
     # Run query and load into a DataFrame
-    with db_connection_str.connect() as connection:
+    with get_db_engine().connect() as connection:
 
         df_unique = pd.read_sql(query2, connection, params={
             "start_time": start_time,
@@ -620,7 +764,7 @@ def monthly(machine_code=None, date=datetime.now()):
         """)
 
         # Run query and load into a DataFrame
-        with db_connection_str.connect() as connection:
+        with get_db_engine().connect() as connection:
             df_filtered = pd.read_sql(query, connection, params={
                 "start_time": start_time,
                 "end_time": end_time,
@@ -655,7 +799,7 @@ def get_main_id (mp_id):
                 where mp_id = :mp_id
                 limit 1 """)
     
-    with db_connection_str.connect() as connection:
+    with get_db_engine().connect() as connection:
         df_filtered = pd.read_sql(query, connection, params={
             "mp_id": mp_id,
         })
@@ -666,7 +810,7 @@ def get_main_id (mp_id):
                 where main_id = :main_id
                 limit 2""")
     
-    with db_connection_str.connect() as connection:
+    with get_db_engine().connect() as connection:
         df_change_mould_info = pd.read_sql(query, connection, params={
             "main_id": main_id,
         })
@@ -683,7 +827,7 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
     if isinstance(date, str):
         date = datetime.strptime(date, "%Y-%m-%d")
     
-    start_time, _, end_time = date_calculation(date)
+    window_start, _, window_end = date_calculation(date)
 
     query = text("""
     SELECT 
@@ -711,11 +855,11 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
 
     """)
 
-    with db_connection_str.connect() as connection:
+    with get_db_engine().connect() as connection:
 
         df = pd.read_sql(query, connection, params={
-            "start_time": start_time,
-            "end_time": end_time
+            "start_time": window_start,
+            "end_time": window_end
         })
 
     activity_columns = [
@@ -758,12 +902,12 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
 
             if open_starts:
                 start_row = open_starts.pop(0)
-                start_time = start_row.time_input
+                activity_start = start_row.time_input
                 machine_code = start_row.machine_code
                 mould_code = start_row.mould_code
                 part_name = start_row.part_name if pd.notna(start_row.part_name) else row.part_name
             elif duration_seconds is not None:
-                start_time = row.time_input - timedelta(seconds=duration_seconds)
+                activity_start = row.time_input - timedelta(seconds=duration_seconds)
                 machine_code = row.machine_code
                 mould_code = row.mould_code
                 part_name = row.part_name
@@ -771,7 +915,14 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
                 continue
 
             if duration_seconds is None:
-                duration_seconds = max((row.time_input - start_time).total_seconds(), 0.0)
+                duration_seconds = max((row.time_input - activity_start).total_seconds(), 0.0)
+
+            activity_end = row.time_input
+            clipped_start = max(activity_start, window_start)
+            clipped_end = min(activity_end, window_end)
+
+            if clipped_end <= clipped_start:
+                continue
 
             paired_rows.append(
                 {
@@ -780,10 +931,31 @@ def mould_activities (date=datetime.now().replace(hour=8, minute=0, second=0, mi
                     'part_name': part_name,
                     'main_id': row.main_id,
                     'base_action': row.base_action,
-                    'start_time': start_time,
-                    'end_time': row.time_input,
-                    'duration_hr': round(duration_seconds / 3600, 2),
+                    'start_time': clipped_start,
+                    'end_time': clipped_end,
+                    'duration_hr': round((clipped_end - clipped_start).total_seconds() / 3600, 2),
                     'remarks': row.remarks,
+                }
+            )
+
+        for start_row in open_starts:
+            clipped_start = max(start_row.time_input, window_start)
+            clipped_end = window_end
+
+            if clipped_end <= clipped_start:
+                continue
+
+            paired_rows.append(
+                {
+                    'machine_code': start_row.machine_code,
+                    'mould_code': start_row.mould_code,
+                    'part_name': start_row.part_name,
+                    'main_id': start_row.main_id,
+                    'base_action': start_row.base_action,
+                    'start_time': clipped_start,
+                    'end_time': clipped_end,
+                    'duration_hr': round((clipped_end - clipped_start).total_seconds() / 3600, 2),
+                    'remarks': start_row.remarks,
                 }
             )
 
@@ -839,13 +1011,14 @@ def efficiency_sql_only(date=datetime.now().replace(hour=8, minute=0, second=0, 
             LEFT JOIN mass_production AS mp ON monitoring.mp_id = mp.mp_id
             LEFT JOIN joblist AS j ON monitoring.main_id = j.main_id
             WHERE monitoring.time_input BETWEEN :start_time AND :end_time
+              AND monitoring.action IN ('normal_cycle', 'abnormal_cycle', 'downtime')
         ) AS activity
         WHERE activity.machine_code IS NOT NULL
         GROUP BY activity.machine_code;
         """)
 
         # Run query and load into a DataFrame
-    with db_connection_str.connect() as connection:
+    with get_db_engine().connect() as connection:
         df = pd.read_sql(query, connection, params={
             "start_time": start_time,
             "end_time": end_time
@@ -857,7 +1030,7 @@ def efficiency_sql_only(date=datetime.now().replace(hour=8, minute=0, second=0, 
     # Convert to timedelta
     df['total_running_time'] = pd.to_timedelta(df['total_running_time'])
 
-    # Keep both the raw SQL efficiency and the 24-hour gap view used by the table.
+    # Keep the legacy 24-hour gap view used by the productivity table.
     df['downtime'] = 24 - df['normal_cycle_time']
     df['efficiency'] = df['efficiency_percent'].round(2)
 
@@ -867,16 +1040,53 @@ def efficiency_sql_only(date=datetime.now().replace(hour=8, minute=0, second=0, 
 
 
 def combined_output(date, actions_result=None):
-    df_summary = efficiency_sql_only(date)
+    if isinstance(date, str):
+        date = datetime.strptime(date, "%Y-%m-%d")
+
+    start_time, _, end_time = date_calculation(date)
+    production_df = _fetch_production_events(start_time, end_time)
     if actions_result is None:
         df_actions, x, y = mould_activities(date)
     else:
         df_actions, x, y = actions_result
 
-    if df_summary is None or df_summary.empty:
-        return df_summary, 0.0, 0.0, 0.0
+    if production_df is None or production_df.empty:
+        return production_df, 0.0, 0.0, 0.0
 
-    df_summary = df_summary.copy()
+    manual_boundary_df = _fetch_manual_boundary_events(start_time, end_time)
+    cluster_df = _build_stop_clusters(production_df, end_time, manual_boundary_df)
+
+    df_summary = (
+        production_df.assign(
+            normal_cycle_seconds=production_df["time_taken"].where(
+                production_df["action"] == "normal_cycle", 0.0
+            ),
+            abnormal_cycle_seconds=production_df["time_taken"].where(
+                production_df["action"] == "abnormal_cycle", 0.0
+            ),
+        )
+        .groupby("machine_code", as_index=False)
+        .agg(
+            normal_cycle_time=("normal_cycle_seconds", lambda s: round(float(s.sum()) / 3600, 2)),
+            abnormal_cycle_time=("abnormal_cycle_seconds", lambda s: round(float(s.sum()) / 3600, 2)),
+            shot_count=("action", lambda s: int((s == "normal_cycle").sum())),
+            first_input_time=("time_input", "min"),
+            last_input_time=("time_input", "max"),
+        )
+    )
+
+    if cluster_df.empty:
+        downtime_df = pd.DataFrame(columns=["machine_code", "downtime"])
+    else:
+        downtime_df = (
+            cluster_df
+            .groupby("machine_code", as_index=False)["duration_hr"]
+            .sum()
+            .rename(columns={"duration_hr": "downtime"})
+        )
+
+    df_summary = df_summary.merge(downtime_df, on="machine_code", how="left")
+    df_summary["downtime"] = df_summary["downtime"].fillna(0).round(2)
     df_actions = df_actions.copy()
 
     pivot_actions = df_actions.pivot_table(
@@ -892,7 +1102,6 @@ def combined_output(date, actions_result=None):
         'adjustment': 'total_adjustment_hr'
     })
 
-    # Add missing columns with 0 if not in pivoted actions
     for col in ['total_change_mould_hr', 'total_adjustment_hr']:
         if col not in pivot_actions.columns:
             pivot_actions[col] = 0
@@ -902,13 +1111,12 @@ def combined_output(date, actions_result=None):
     df_merged[['total_change_mould_hr', 'total_adjustment_hr']] = df_merged[
         ['total_change_mould_hr', 'total_adjustment_hr']].fillna(0)
 
-    # Add adjustment & mould change time into total_time_taken
     df_merged['total_time_taken'] = (
-        df_merged['total_time_taken']
+        df_merged['normal_cycle_time']
+        + df_merged['downtime']
         + df_merged['total_adjustment_hr']
         + df_merged['total_change_mould_hr']
-    )
-
+    ).clip(upper=24).round(2)
 
     df_merged['machine_capacity'] = (df_merged['normal_cycle_time'] / 24 * 100).round(2)
     df_merged['efficiency'] = (
@@ -924,38 +1132,29 @@ def combined_output(date, actions_result=None):
     planned_productivity = float(round((actual_total_gain_hr / planned_capacity_hours) * 100, 2)) if planned_capacity_hours else 0.0
     overall_efficiency = actual_productivity
 
-    # Create totals for all numeric columns you care about
     numeric_cols = [
         'total_time_taken',
         'normal_cycle_time',
         'abnormal_cycle_time',
-        'downtime_time',
+        'downtime',
         'total_adjustment_hr',
         'total_change_mould_hr',
-        'downtime'
     ]
 
-        # Totals for numeric columns
     df_merged.loc['Total', numeric_cols] = df_merged[numeric_cols].sum().round(2)
 
-    # Aggregate metrics instead of blanking.
     df_merged.loc['Total', 'efficiency'] = overall_efficiency
-    df_merged.loc['Total', 'machine_capacity'] = planned_productivity
     df_merged.loc['Total', 'shot_count'] = round(df_merged['shot_count'].sum(), 2) if not df_merged['shot_count'].empty else 0.0
 
-    # Clear non-summed columns
     for col in ['machine_code', 'first_input_time', 'last_input_time']:
         df_merged[col] = df_merged[col].astype("object")
         df_merged.loc['Total', col] = ''
 
-    # Reorder columns
     desired_order = [
         'machine_code',
-        'total_time_taken', 
+        'total_time_taken',
         'normal_cycle_time',
         'downtime',
-        # 'abnormal_cycle_time',
-        # 'downtime_time',
         'total_adjustment_hr',
         'total_change_mould_hr',
         'shot_count',

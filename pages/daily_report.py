@@ -203,16 +203,9 @@ rowClassRules = {
     columnSize="autoSize",
 )
 
-df_info = pd.DataFrame(columns=["idmonitoring", "time_input", "time_taken", "total_minutes"])
-
-columnDefs = [
-            { 'field': 'idmonitoring'},
-            { 'field': 'date', 'filter': 'agDateColumnFilter'},
-            { 'field': 'time'},
-            {'field': 'time_taken' ,'filter': 'agNumberColumnFilter'},
-            {'field': 'action'},
-            # {'field': 'downtime'},
-            ]
+df_info = pd.DataFrame(
+    columns=["start_id", "end_id", "time_input", "end_time", "time_taken", "total_minutes", "closed_by"]
+)
 
 
 grid_information_bar = dag.AgGrid(
@@ -225,7 +218,7 @@ grid_information_bar = dag.AgGrid(
             "wrapHeaderText": True,
             "autoHeaderHeight": True
         } for i in [
-            "idmonitoring", "time_input", "time_taken", "total_minutes",
+            "start_id", "end_id", "time_input", "end_time", "time_taken", "total_minutes", "closed_by",
         ]
     ],
     columnSize="sizeToFit",  # Use only one columnSize option
@@ -255,7 +248,7 @@ refresh_button2 = dbc.Button(
 # fallback placeholder for initial render
 df = pd.DataFrame(columns=[
     "machine_code", "normal_cycle_time", "abnormal_cycle_time", "downtime",
-    "shot_count", "change_mould", "adjustment", "productivity", "machine_capacity"
+    "shot_count", "total_change_mould_hr", "total_adjustment_hr", "efficiency", "total_time_taken"
 ])
 
 # reusable card component
@@ -315,14 +308,6 @@ def create_table(dataframe):
                         style = {"backgroundColor": "#ffcccc", "fontWeight": "bold"}  # light red
                 except ValueError:
                     pass  # skip if not convertible to float
-
-            # Highlight machine capacity == 100%
-            elif col == "Actual Gain Hr / 24 (%)":
-                try:
-                    if cell_value not in ("", None) and float(cell_value) == 100:
-                        style = {"backgroundColor": "#ccffcc", "fontWeight": "bold"}  # light green
-                except ValueError:
-                    pass
 
             row.append(html.Td(cell_value, style=style))
         body.append(html.Tr(row))
@@ -604,7 +589,7 @@ def update_productivity_table(active_tab, selected_date, _n_intervals):
     if df is None or df.empty:
         df = pd.DataFrame(columns=[
             "machine_code", "normal_cycle_time", "abnormal_cycle_time", "downtime",
-            "shot_count", "change_mould", "adjustment", "productivity", "machine_capacity"
+            "shot_count", "total_change_mould_hr", "total_adjustment_hr", "efficiency", "total_time_taken"
         ])
         return html.P("No data available for the selected date."), "0%", "0%"
 

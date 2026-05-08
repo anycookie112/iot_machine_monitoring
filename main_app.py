@@ -1,9 +1,8 @@
 import dash
 import dash_bootstrap_components as dbc
-from utils.mqtt import get_mqtt_client
 from dash import html, dcc, Input, Output, State
+from config.config import APP_CONFIG
 
-mqttc = get_mqtt_client()
 app = dash.Dash(__name__,use_pages=True, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 SIDEBAR_WIDTH = "16rem"
 SIDEBAR_COLLAPSED_WIDTH = "0"
@@ -18,7 +17,7 @@ sidebar_content = html.Div([
             dbc.NavLink("Home", href="/", active="exact"),
             dbc.NavLink("Machine Status", href="/page-1", active="exact"),
             dbc.NavLink("Daily Report", href="/daily", active="exact"),
-            dbc.NavLink("Add Mould", href="/mould", active="exact"),
+            dbc.NavLink("Mould Settings", href="/mould", active="exact"),
            # dbc.NavLink("Live", href="/live", active="exact"),
         ],
         vertical=True,
@@ -109,5 +108,8 @@ def toggle_sidebar(n_clicks, is_open):
     return new_is_open, sidebar_style, content_style
 
 if __name__ == "__main__":
-    app.run_server(port=8888, debug=True) 
-    # app.run_server(port=8888)
+    app.run_server(
+        host=APP_CONFIG["dash_host"],
+        port=APP_CONFIG["dash_port"],
+        debug=APP_CONFIG["dash_debug"],
+    )

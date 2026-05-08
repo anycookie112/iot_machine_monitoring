@@ -2,22 +2,14 @@ import dash
 import dash_bootstrap_components as dbc
 import pandas as pd
 from dash import Input, Output, callback, dcc, html
-from sqlalchemy import create_engine
 
-from config.config import DB_CONFIG
-
-
-db_connection_str = (
-    f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}"
-    f"@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-)
-db_connection = create_engine(db_connection_str)
+from utils.db import get_db_engine
 
 dash.register_page(__name__, path="/page-1")
 
 
 def fetch_data():
-    return pd.read_sql("SELECT * FROM machine_list", con=db_connection)
+    return pd.read_sql("SELECT * FROM machine_list", con=get_db_engine())
 
 
 def machine_card_class(machine_status, esp_status):
@@ -76,5 +68,9 @@ layout = html.Div(
     Input("interval-component", "n_intervals"),
 )
 def update_cards(_n):
-    df_updated = fetch_data()
+    try:
+        df_updated = fetch_data()
+    except Exception as exc:
+        return dbc.Alert(f"Machine status data is unavailable: {exc}", color="danger")
+
     return [create_machine_box(machine) for _, machine in df_updated.iterrows()]

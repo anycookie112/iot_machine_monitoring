@@ -50,11 +50,20 @@ def extract_data():
         records = []
         for i in range(0, len(values) - 4, 5):
             try:
+                main_id = int(values[i + 2])
+                mp_id = int(values[i + 3])
+                if main_id <= 0 or mp_id <= 0:
+                    print(
+                        f"Skipping row at {i} because main_id/mp_id is invalid: "
+                        f"main_id={main_id}, mp_id={mp_id}"
+                    )
+                    continue
+
                 records.append({
                     "timestamp": values[i],
                     "elapsed_time": float(values[i + 1]),
-                    "main_id": int(values[i + 2]),
-                    "mp_id": int(values[i + 3]),
+                    "main_id": main_id,
+                    "mp_id": mp_id,
                     "action": action_map.get(int(values[i + 4]), "unknown")
                 })
             except Exception as e:

@@ -3,22 +3,15 @@ import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import pandas as pd
 from dash import Input, Output, State, dcc, html
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
-from config.config import DB_CONFIG
+from utils.db import get_db_engine
 
 
 dash.register_page(__name__, path="/page-2")
 
-db_connection_str = (
-    f"mysql+pymysql://{DB_CONFIG['username']}:{DB_CONFIG['password']}"
-    f"@{DB_CONFIG['host']}/{DB_CONFIG['database']}"
-)
-db_connection = create_engine(db_connection_str)
-
-
 def fetch_data():
-    df = pd.read_sql("SELECT * FROM mould_list", con=db_connection)
+    df = pd.read_sql("SELECT * FROM mould_list", con=get_db_engine())
     filtered_df = df[df["service_status"] == 1]
     return filtered_df.drop(
         columns=[
@@ -44,7 +37,7 @@ def fetch_data():
 
 def build_grid(dataframe):
     column_defs = [{"field": "mould_code", "checkboxSelection": True, "headerCheckboxSelection": True}]
-    column_defs.extend({"field": column} for column in dataframe.columns)
+    column_defs.extend({"field": column} for column in dataframe.columns if column != "mould_code")
 
     return dag.AgGrid(
         id="service-table",
@@ -56,7 +49,12 @@ def build_grid(dataframe):
 
 
 def layout():
-    data_excluded = fetch_data()
+    try:
+        data_excluded = fetch_data()
+        error_banner = None
+    except Exception as exc:
+        data_excluded = pd.DataFrame(columns=["mould_code"])
+        error_banner = dbc.Alert(f"Mould service data is unavailable: {exc}", color="danger")
 
     input_section = dbc.Card(
         [
@@ -88,6 +86,7 @@ def layout():
 
     return html.Div(
         [
+            error_banner,
             html.H1("Mould Service Table:", className="card-title"),
             dbc.Button("Refresh Table", id="refresh-btn", color="primary", className="mt-3 mb-3"),
             dcc.Interval(id="refresh-table", n_intervals=-1),
@@ -132,7 +131,7 @@ def submit_service_record(n_clicks, mould_code, service_type, remarks):
     service_type_str = "minor" if service_type == 1 else "major"
 
     try:
-        with db_connection.begin() as connection:
+        with get_db_engine().begin() as connection:
             if service_type == 1:
                 connection.execute(
                     text(
@@ -173,4 +172,7 @@ def submit_service_record(n_clicks, mould_code, service_type, remarks):
     prevent_initial_call=True,
 )
 def refresh_table(_n_clicks, _submit):
-    return fetch_data().to_dict("records")
+    try:
+        return fetch_data().to_dict("records")
+    except Exception:
+        return []
