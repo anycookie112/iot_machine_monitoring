@@ -1099,16 +1099,12 @@ def combined_output(date, actions_result=None):
 
     df_summary = (
         production_df.assign(
-            normal_cycle_seconds=production_df["time_taken"].where(
-                production_df["action"] == "normal_cycle", 0.0
-            ),
             abnormal_cycle_seconds=production_df["time_taken"].where(
                 production_df["action"] == "abnormal_cycle", 0.0
             ),
         )
         .groupby("machine_code", as_index=False)
         .agg(
-            normal_cycle_time=("normal_cycle_seconds", lambda s: round(float(s.sum()) / 3600, 2)),
             abnormal_cycle_time=("abnormal_cycle_seconds", lambda s: round(float(s.sum()) / 3600, 2)),
             shot_count=("action", lambda s: int((s == "normal_cycle").sum())),
             first_input_time=("time_input", "min"),
@@ -1152,12 +1148,31 @@ def combined_output(date, actions_result=None):
     df_merged[['total_change_mould_hr', 'total_adjustment_hr']] = df_merged[
         ['total_change_mould_hr', 'total_adjustment_hr']].fillna(0)
 
-    df_merged['total_time_taken'] = (
-        df_merged['normal_cycle_time']
-        + df_merged['downtime']
-        + df_merged['total_adjustment_hr']
-        + df_merged['total_change_mould_hr']
-    ).clip(upper=24).round(2)
+    # Wall time of all activity per machine, including manual workflow that may
+    # bracket the production span. Using event timestamps (rather than summing
+    # `time_taken`) keeps the result firmware-agnostic — some ESPs report only
+    # the cycle's active portion in `time_taken`, which under-counts wait time
+    # between cycles.
+    if df_actions.empty:
+        manual_span = pd.DataFrame(columns=["machine_code", "manual_first", "manual_last"])
+    else:
+        manual_span = df_actions.groupby("machine_code", as_index=False).agg(
+            manual_first=("start_time", "min"),
+            manual_last=("end_time", "max"),
+        )
+    df_merged = df_merged.merge(manual_span, on="machine_code", how="left")
+    df_merged["wall_first"] = df_merged[["first_input_time", "manual_first"]].min(axis=1)
+    df_merged["wall_last"] = df_merged[["last_input_time", "manual_last"]].max(axis=1)
+    df_merged["total_time_taken"] = (
+        (df_merged["wall_last"] - df_merged["wall_first"]).dt.total_seconds() / 3600
+    ).clip(lower=0, upper=24).round(2)
+    df_merged["normal_cycle_time"] = (
+        df_merged["total_time_taken"]
+        - df_merged["downtime"]
+        - df_merged["total_adjustment_hr"]
+        - df_merged["total_change_mould_hr"]
+    ).clip(lower=0).round(2)
+    df_merged = df_merged.drop(columns=["wall_first", "wall_last", "manual_first", "manual_last"])
 
     df_merged['machine_capacity'] = (df_merged['normal_cycle_time'] / 24 * 100).round(2)
     df_merged['efficiency'] = (
