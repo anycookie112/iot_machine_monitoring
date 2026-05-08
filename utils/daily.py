@@ -116,10 +116,6 @@ STOP_ACTIONS = {"abnormal_cycle", "downtime"}
 PRODUCTION_ACTIONS = ("normal_cycle", "abnormal_cycle", "downtime")
 MANUAL_STOP_BOUNDARY_ACTIONS = {"change mould start", "adjustment start"}
 
-# Firmware in ESP_LOG_TXT_WITH_TASK_IMPROVED stops logging when downtime exceeds
-# this threshold; orphan clusters can never realistically exceed it.
-MAX_OPEN_CLUSTER_HOURS = 5
-
 
 def _shift_name(timestamp_value):
     return "Shift 1" if 8 <= timestamp_value.hour < 20 else "Shift 2"
@@ -300,17 +296,10 @@ def _build_stop_clusters(events_df, window_end, manual_events_df=None):
                 clusters.append(open_cluster)
                 open_cluster = None
 
-        if open_cluster is not None:
-            cap = open_cluster["cluster_start_time"] + pd.Timedelta(
-                hours=MAX_OPEN_CLUSTER_HOURS
-            )
-            cap = min(cap, window_end_ts)
-            open_cluster["cluster_end_time"] = cap
-            open_cluster["end_id"] = None
-            open_cluster["closed_by"] = (
-                "firmware_5h_cap" if cap < window_end_ts else "window_end"
-            )
-            clusters.append(open_cluster)
+        # Orphan clusters (no closing event) are intentionally dropped: the
+        # firmware silently ends the session after MAX_OPEN_CLUSTER_HOURS, and
+        # we have no signal to distinguish a real stop from an offline ESP,
+        # so they don't contribute to totals.
 
     cluster_df = pd.DataFrame(
         clusters,
