@@ -1175,9 +1175,10 @@ def combined_output(date, actions_result=None):
     df_merged = df_merged.drop(columns=["wall_first", "wall_last", "manual_first", "manual_last"])
 
     df_merged['machine_capacity'] = (df_merged['normal_cycle_time'] / 24 * 100).round(2)
-    df_merged['efficiency'] = (
-        (df_merged['normal_cycle_time'] / df_merged['total_time_taken'].where(df_merged['total_time_taken'] > 0)) * 100
-    ).fillna(0).round(2)
+    # Efficiency is measured against a full 24 h day so partial utilization is
+    # visible — a machine that only ran 12 h productively shows 50% even if
+    # those 12 h were perfectly utilized. This matches the factory-level view.
+    df_merged['efficiency'] = (df_merged['normal_cycle_time'] / 24 * 100).round(2)
 
     actual_total_gain_hr = df_merged['normal_cycle_time'].sum()
     total_actual_avail_hr = df_merged['total_time_taken'].sum()
@@ -1186,7 +1187,8 @@ def combined_output(date, actions_result=None):
 
     actual_productivity = float(round((actual_total_gain_hr / total_actual_avail_hr) * 100, 2)) if total_actual_avail_hr else 0.0
     planned_productivity = float(round((actual_total_gain_hr / planned_capacity_hours) * 100, 2)) if planned_capacity_hours else 0.0
-    overall_efficiency = actual_productivity
+    # Total-row efficiency stays consistent with the per-machine calc above.
+    overall_efficiency = planned_productivity
 
     numeric_cols = [
         'total_time_taken',
