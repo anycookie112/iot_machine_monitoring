@@ -316,6 +316,11 @@ void publishJobEnd() {
 }
 
 void startLogging() {
+  // The start command from the backend (UI click or get_mpid response) already
+  // carries main_id/mp_id, which the callback sets before we get here.
+  // requestCurrentRunIds() inside this function would loop: backend would
+  // reply with another `command=start`, which calls startLogging() again, etc.
+  // The boot-time call from connectMQTT() is enough to fetch IDs after a reset.
   Serial.println("Start logging");
   portENTER_CRITICAL(&stateMux);
   loggingEnabled = true;
@@ -323,7 +328,6 @@ void startLogging() {
 
   resetTrackingState();
   requestSamplingReset();
-  requestCurrentRunIds();
   blinkLed();
 }
 
